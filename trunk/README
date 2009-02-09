@@ -1,0 +1,90 @@
+OVERVIEW
+========
+
+This is a client for the Message Queue Telemetry Transport  (http://www.mqtt.org/) 
+written in erlang. It's an open, lightweight protocol for reliable message, 
+devised originally by IBM.
+
+CONTACT
+=======
+
+Reach me at hellomatty@gmail.com
+
+USAGE
+=====
+
+This client offers a simple synchronous API:
+
+  {ok, P} = mqtt_client:connect("172.16.50.128"),
+  mqtt_client:subscribe(P, "topic"),
+  {mqtt, published, _Topic, _Message} = mqtt_client:get_message(),
+  mqtt_client:unsubscribe(P, "topic"),
+  mqtt_client:publish(P, "topic2", "i am leaving"),
+  mqtt_client:disconnect(P).
+
+There is also a finer-grained asynchronous API:
+
+r
+  {ok, P} = mqtt_client:connect("172.16.50.128"),
+  P ! {subscribe, [#sub{topic = "topic", qos = 0}]},
+  receive
+    {mqtt, published, _Topic, _Message} ->
+      ok  
+  end,
+  P ! {unsubscribe, [#sub{topic = "topic"}]},
+  P ! {publish, "topic2", "i am leaving", []},
+  P ! disconnect.
+
+Some specifics follow.
+ * Connecting
+
+The full form of the connect function takes 3 arguments:
+
+  connect(Host, Port, Options)
+
+Options is an array that can include:
+ o {keepalive, KeepAlive} - how frequently (in seconds) to send a keep-alive ping
+      to the broker
+ o {retry, Retry} - how frequently (in seconds) to resend unacknowledged (qos > 0)
+      messages
+ o {client_id, ClientId} - the client id to present to the broker
+ o {will, Topic, Message, PublishOptions} - a 'will and testament' to deliver 
+      on client death. PublishOptions is an array that may contain {qos, QoS} 
+      or {retain, Boolean}.
+ o {clean_start, Boolean} - whether this is a 'clean start
+
+ * Subscribing
+
+The asynchronous API allows multiple topics to be subscribed to at once, and
+specific quality of service levels requested, eg:
+'
+  P ! {subscribe, [#sub{topic = "topic", qos = 0}, #sub{topic = "topic2", qos = 2}]},
+
+The 'sub' record is available to ease working with such a request.
+
+If you need to know which topics your client is subscribed to, or the qos levels
+that were grnted, call the following function:
+
+  matt_client:subscriptions(P).
+
+ * Unsubscribing
+
+The asynchronous API allows multiple topics to be unsubscribed to at once:
+specific quality of service levels requested, eg:
+'
+  P ! {unsubscribe, [#sub{topic = "topic", qos = 0}, #sub{topic = "topic2", qos = 2}]},
+
+ * Sending messages
+
+You may specify the quality of service or whether a message should be retained
+using the asynchronous API:
+
+  P ! {publish, "topic", "message", [{qos, 2}, {retain, true}]}.
+
+ * Receivin messages
+
+The 'get_message' function will block until a message is received via a subscribed
+topic.
+
+The message {mqtt, published, Topic, Message} is also sent to the process that 
+initially called the 'connect' function.
