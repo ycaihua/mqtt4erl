@@ -1,0 +1,83 @@
+%%
+%% An erlang client for MQTT (http://www.mqtt.org/)
+%%
+
+-define(LOG(Msg), io:format("{~p:~p}: ~p~n", [?MODULE, ?LINE, Msg])).
+
+-define(MQTT_PORT, 1883).
+
+-define(PROTOCOL_NAME, "MQIsdp").
+-define(PROTOCOL_VERSION, 3).
+
+-define(UNUSED, 0).
+
+-define(DEFAULT_KEEPALIVE, 120).
+-define(DEFAULT_RETRY, 120).
+-define(DEFAULT_CONNECT_TIMEOUT, 5).
+
+-define(CONNECT, 1).
+-define(CONNACK, 2).
+-define(PUBLISH, 3).
+-define(PUBACK, 4).
+-define(PUBREC, 5).
+-define(PUBREL, 6).
+-define(PUBCOMP, 7).
+-define(SUBSCRIBE, 8).
+-define(SUBACK, 9).
+-define(UNSUBSCRIBE, 10).
+-define(UNSUBACK, 11).
+-define(PINGREQ, 12).
+-define(PINGRESP, 13).
+-define(DISCONNECT, 14).
+
+-record(context, {
+  pid,
+  socket
+}).
+
+-record(client, {
+  context,
+  id_pid,
+  owner_pid,
+  send_store_pid,
+  recv_store_pid,
+  subscriptions = [],
+  ping_timer,
+  retry_timer
+}).
+
+-record(connect_options, {
+  client_id = mqtt_client:default_client_id(),
+  clean_start = true,
+  will,
+  keepalive = ?DEFAULT_KEEPALIVE,
+  retry = ?DEFAULT_RETRY,
+  connect_timeout = ?DEFAULT_CONNECT_TIMEOUT
+}).
+
+-record(mqtt, {
+  id,
+  type,
+  dup = 0,
+  qos = 0,
+  retain = 0,
+  variable_header = <<>>,
+  payload = <<>>,
+  hint
+}).
+
+-record(sub, {
+  topic,
+  qos = 0
+}).
+
+-record(publish_options, {
+  qos = 0,
+  retain = 0
+}).
+
+-record(will, {
+  topic,
+  message,
+  publish_options = #publish_options{}
+}).
