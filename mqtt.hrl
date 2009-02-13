@@ -30,23 +30,29 @@
 -define(PINGRESP, 13).
 -define(DISCONNECT, 14).
 
--record(client, {
+-record(context, {
   pid,
+  socket
+}).
+
+-record(client, {
+  context,
   id_pid,
   owner_pid,
-  recv_pid,
-  store_pid,
-  socket,
-  status = not_connected,
-  client_id,
+  send_store_pid,
+  recv_store_pid,
   subscriptions = [],
-  keepalive = ?DEFAULT_KEEPALIVE,
-  retry = ?DEFAULT_RETRY,
-  connect_timeout = ?DEFAULT_CONNECT_TIMEOUT,
-  clean_start = true,
-  will,
   ping_timer,
   retry_timer
+}).
+
+-record(connect_options, {
+  client_id = mqtt_client:default_client_id(),
+  clean_start = true,
+  will,
+  keepalive = ?DEFAULT_KEEPALIVE,
+  retry = ?DEFAULT_RETRY,
+  connect_timeout = ?DEFAULT_CONNECT_TIMEOUT
 }).
 
 -record(mqtt, {
@@ -65,8 +71,13 @@
   qos = 0
 }).
 
+-record(publish_options, {
+  qos = 0,
+  retain = 0
+}).
+
 -record(will, {
   topic,
   message,
-  options = []
+  publish_options = #publish_options{}
 }).
