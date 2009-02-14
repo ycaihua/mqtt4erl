@@ -7,6 +7,8 @@
 
 -include_lib("mqtt.hrl").
 
+-compile(export_all).
+
 -export([construct_message/1, construct_message/2,  set_connect_options/1, set_publish_options/1, decode_message/2, recv_loop/1, send_ping/1, send/2]).
 
 construct_message(Request) ->
@@ -37,8 +39,9 @@ construct_message({connect, _Host, _Port, #connect_options{} = Options}, Prototy
   Prototype#mqtt{
     type = ?CONNECT,
     variable_header = list_to_binary([
-      encode_string(?PROTOCOL_NAME),
-      <<?PROTOCOL_VERSION:8/big, ?UNUSED:2, WillRetain:1, WillQoS:2/big, WillFlag:1, CleanStart:1, ?UNUSED:1, (Options#connect_options.keepalive):16/big>>]
+      encode_string(Options#connect_options.protocol_name),
+      <<(Options#connect_options.protocol_version)/big>>, 
+      <<?UNUSED:2, WillRetain:1, WillQoS:2/big, WillFlag:1, CleanStart:1, ?UNUSED:1, (Options#connect_options.keepalive):16/big>>]
     ),
     payload = Payload
   };
@@ -153,8 +156,35 @@ set_publish_options([{retain, false}|T], Options) ->
 set_publish_options([UnknownOption|_T], _Options) ->
   exit({unknown, publish_option, UnknownOption}).
 
-decode_message(#mqtt{type = ?CONNECT} = Message, _Rest) ->
-  Message;
+decode_message(#mqtt{type = ?CONNECT} = Message, Rest) ->
+  <<ProtocolNameLength:16/big, _/binary>> = Rest,
+  {VariableHeader, Payload} = split_binary(Rest, 2 + ProtocolNameLength + 4),
+  <<_:16, ProtocolName:ProtocolNameLength/binary, ProtocolVersion:8/big, _:2, WillRetain:1, WillQoS:2/big, WillFlag:1, CleanStart:1, _:1, KeepAlive:16/big>> = VariableHeader,
+  {ClientId, Will} = case WillFlag of
+    1 ->
+      [C, WT, WM] = decode_strings(Payload),
+      W = #will{
+        topic = WT,
+        message = WM,
+        publish_options = #publish_options{qos = WillQoS, retain = WillRetain}
+      },
+      {C, W};
+    0 ->
+      [C] = decode_strings(Payload),
+      {C, undefined}
+  end,
+  Message#mqtt{
+    variable_header = VariableHeader,
+    payload = Payload,
+    hint = #connect_options{
+      client_id = ClientId,
+      protocol_name = binary_to_list(ProtocolName),
+      protocol_version = ProtocolVersion,
+      clean_start = CleanStart =:= 1,
+      will = Will,
+      keepalive = KeepAlive
+    }
+  };
 decode_message(#mqtt{type = ?CONNACK} = Message, Rest) ->
   <<_:8, ResponseCode:8/big>> = Rest,
   Message#mqtt{variable_header = Rest, hint = ResponseCode};
@@ -238,9 +268,9 @@ recv_loop(Context) ->
   ok = process(Message, Context),
   recv_loop(Context).
 
-process(#mqtt{type = ?CONNECT}, Context) ->
+process(#mqtt{type = ?CONNECT} = Message, Context) ->
   ?LOG({recv, process, connect}),
-  Context#context.pid ! connect,
+  Context#context.pid ! {connect, Message#mqtt.hint},
   ok;
 process(#mqtt{type = ?CONNACK} = Message, Context) ->
   ?LOG({recv, process, connack}),
@@ -365,6 +395,14 @@ encode_string(String) ->
   Bytes = list_to_binary(String),
   Length = size(Bytes),
   <<Length:16/big, Bytes/binary>>.
+
+decode_strings(Bytes) when is_binary(Bytes) ->
+  decode_strings(Bytes, []).
+decode_strings(<<>>, Strings) ->
+  lists:reverse(Strings);
+decode_strings(<<Length:16/big, _/binary>> = Bytes, Strings) ->
+  <<_:16, Binary:Length/binary, Rest/binary>> = Bytes,
+  decode_strings(Rest, [binary_to_list(Binary)|Strings]).
 
 recv(Length, Context) ->
   case gen_tcp:recv(Context#context.socket, Length) of
