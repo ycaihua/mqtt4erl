@@ -47,6 +47,8 @@
 }).
 
 -record(connect_options, {
+  protocol_name = ?PROTOCOL_NAME,
+  protocol_version = ?PROTOCOL_VERSION,
   client_id = mqtt_client:default_client_id(),
   clean_start = true,
   will,
