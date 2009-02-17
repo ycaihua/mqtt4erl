@@ -1,3 +1,8 @@
+0.1 to 0.2
+----------
+- namespaced message tuples
+- reworked quality of service support
+
 0.0 to 0.1
 ----------
 - support for CONNACK return codes

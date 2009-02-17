@@ -13,13 +13,16 @@ start() ->
 
 store_loop(State) ->
   NewState = receive
-    {store, put, Message} when Message#mqtt.id /= undefined ->
+    {store, put, Message, FromPid} when Message#mqtt.id /= undefined ->
       ?LOG({message_store, put, Message#mqtt.id}),
+      FromPid ! {store, ok},
       dict:store(Message#mqtt.id, Message, State);
     {store, get, all, FromPid} ->
-      FromPid ! {message_store, get, ok, dict:to_list(State)},
+      ?LOG({message_store, get, all}),
+      FromPid ! {store, get, ok, dict:to_list(State)},
       State;
     {store, get, MessageId, FromPid} ->
+      ?LOG({message_store, get, MessageId}),
       case dict:find(MessageId, State) of
         {ok, Message} ->
           ?LOG({message_store, get, MessageId, ok}),
@@ -28,8 +31,9 @@ store_loop(State) ->
           FromPid ! {store, get, not_found}
       end,
       State;
-    {store, delete, MessageId} ->
+    {store, delete, MessageId, FromPid} ->
       ?LOG({message_store, delete, MessageId}),
+      FromPid ! {store, ok},
       dict:erase(MessageId, State);
     Msg ->
       ?LOG({message_store, unexpected_message, Msg}),

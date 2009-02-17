@@ -19,7 +19,6 @@ construct_message({connack, ReturnCode}, Prototype) ->
     variable_header = <<?UNUSED:8, ReturnCode:8/big>>
   };
 construct_message({connect, _Host, _Port, #connect_options{} = Options}, Prototype) ->
-  ?LOG({options, Options}),
   CleanStart = case Options#connect_options.clean_start of
     true ->
       1;
@@ -96,6 +95,11 @@ construct_message({unsubscribe, Subs}, Prototype) ->
     payload = list_to_binary(lists:map(fun({sub, T, _Q}) -> encode_string(T) end, Subs)),
     hint = Subs
   };
+construct_message({unsuback, MessageId}, Prototype) ->
+  Prototype#mqtt{
+    type = ?UNSUBACK,
+    variable_header = <<MessageId:16/big>>
+  }; 
 construct_message(pingreq, Prototype) ->
   Prototype#mqtt{
     type = ?PINGREQ
@@ -243,6 +247,15 @@ decode_message(#mqtt{type = ?SUBACK} = Message, Rest) ->
     payload = Payload,
     hint = {MessageId, GrantedQoS}
   };
+decode_message(#mqtt{type = ?UNSUBSCRIBE} = Message, Rest) ->
+  {VariableHeader, Payload} = split_binary(Rest, 2),
+  <<MessageId:16/big>> = VariableHeader,
+  Message#mqtt{
+    id = MessageId,
+    variable_header = VariableHeader,
+    payload = Payload,
+    hint = {MessageId, lists:map(fun(T) -> #sub{topic = T} end, decode_strings(Payload))}
+  };
 decode_message(#mqtt{type = ?UNSUBACK} = Message, Rest) ->
   <<MessageId:16/big>> = Rest,
   Message#mqtt{
@@ -270,14 +283,14 @@ recv_loop(Context) ->
 
 process(#mqtt{type = ?CONNECT} = Message, Context) ->
   ?LOG({recv, process, connect}),
-  Context#context.pid ! {connect, Message#mqtt.hint},
+  Context#context.pid ! Message,
   ok;
 process(#mqtt{type = ?CONNACK} = Message, Context) ->
   ?LOG({recv, process, connack}),
   ReturnCode = Message#mqtt.hint,
   case ReturnCode of
     0 ->
-      Context#context.pid ! connected;
+      Context#context.pid ! Message;
     1 ->
       exit({connect_refused, wrong_protocol_version});
     2 ->
@@ -295,59 +308,51 @@ process(#mqtt{type = ?PINGREQ}, Context) ->
   ok;
 process(#mqtt{type = ?PUBLISH, qos = 0} = Message, Context) ->
   ?LOG({recv, publish, Message}),
-  Context#context.pid ! {received, Message},
+  Context#context.pid ! Message,
   ok;
-process(#mqtt{type = ?PUBLISH} = Message, Context) ->
-  {MessageId, _, _} = Message#mqtt.hint,
+%% TODO should the next 2 be synchronous deliveries, for correctness?
+process(#mqtt{type = ?PUBLISH, qos = 1, hint = {MessageId, _, _}} = Message, Context) ->
   ?LOG({recv, publish, Message}),
-  Context#context.pid ! {received, Message},
-  case Message#mqtt.qos of
-    1 ->
-      send(construct_message({puback, MessageId}), Context);
-    2 ->
-      send(construct_message({pubrec, MessageId}), Context)
-  end,
+  Context#context.pid ! Message,
+  send(construct_message({puback, MessageId}), Context),
+  ok;
+process(#mqtt{type = ?PUBLISH, qos = 2, hint = {MessageId, _, _}} = Message, Context) ->
+  ?LOG({recv, publish, Message}),
+  Context#context.pid ! Message,
+  send(construct_message({pubrec, MessageId}), Context),
   ok;
 process(#mqtt{type = ?PUBACK} = Message, Context) ->
-  MessageId = Message#mqtt.hint,
-  ?LOG({recv, puback, MessageId}),
-  Context#context.pid ! {ack, MessageId},
+  ?LOG({recv, puback, Message}),
+  Context#context.pid ! Message,
   ok;
-process(#mqtt{type = ?PUBREC} = Message, Context) ->
-  MessageId = Message#mqtt.hint,
+process(#mqtt{type = ?PUBREC, hint = MessageId} = _Message, Context) ->
   ?LOG({recv, pubrec, MessageId}),
   send(construct_message({pubrel, MessageId}), Context),
   ok;
-process(#mqtt{type = ?PUBREL} = Message, Context) ->
-  MessageId = Message#mqtt.hint,
+process(#mqtt{type = ?PUBREL, hint = MessageId} = Message, Context) ->
   ?LOG({recv, pubrel, MessageId}),
-  Context#context.pid ! {release, MessageId},
+  Context#context.pid ! Message,
   send(construct_message({pubcomp, MessageId}), Context),
   ok;
-process(#mqtt{type = ?PUBCOMP} = Message, Context) ->
-  MessageId = Message#mqtt.hint,
+process(#mqtt{type = ?PUBCOMP, hint = MessageId} = Message, Context) ->
   ?LOG({recv, pubcomp, MessageId}),
-  Context#context.pid ! {ack, MessageId},
+  Context#context.pid ! Message,
   ok;
 process(#mqtt{type = ?SUBSCRIBE} = Message, Context) ->
   ?LOG({recv, subscribe, Message#mqtt.hint}),
-  Context#context.pid ! {subscribe, Message#mqtt.hint},
+  Context#context.pid ! Message,
   ok;
 process(#mqtt{type = ?SUBACK} = Message, Context) ->
   ?LOG({recv, suback, Message#mqtt.hint}),
-  Context#context.pid ! {subscribed, Message#mqtt.hint},
-  {MessageId, _} = Message#mqtt.hint,
-  Context#context.pid ! {ack, MessageId},
+  Context#context.pid ! Message,
   ok;
 process(#mqtt{type = ?UNSUBSCRIBE} = Message, Context) ->
   ?LOG({recv, unsubscribe, Message#mqtt.hint}),
-  Context#context.pid ! {unsubscribe, Message#mqtt.hint},
+  Context#context.pid ! Message,
   ok;
 process(#mqtt{type = ?UNSUBACK} = Message, Context) ->
-  MessageId = Message#mqtt.hint,
-  ?LOG({recv, unsuback, id, MessageId}),
-  Context#context.pid ! {unsubscribed, MessageId},
-  Context#context.pid !{ack, MessageId},
+  ?LOG({recv, unsuback, Message}),
+  Context#context.pid ! Message,
   ok;
 process(Msg, _Context) ->
   ?LOG({recv, process, unexpected_message, Msg}),
@@ -390,7 +395,26 @@ encode_fixed_header(Message) when is_record(Message, mqtt) ->
 decode_fixed_header(Byte) ->
   <<Type:4/big, Dup:1, QoS:2/big, Retain:1>> = Byte,
   #mqtt{type = Type, dup = Dup, qos = QoS, retain = Retain}.
-  
+ 
+command_for_type(Type) ->
+  case Type of
+    ?CONNECT -> connect;
+    ?CONNACK -> connack;
+    ?PUBLISH -> publish;
+    ?PUBACK  -> puback;
+    ?PUBREC -> pubrec;
+    ?PUBREL -> pubrel;
+    ?PUBCOMP -> pubcomp;
+    ?SUBSCRIBE -> subscribe;
+    ?SUBACK -> suback;
+    ?UNSUBSCRIBE -> unsubscribe;
+    ?UNSUBACK -> unsuback;
+    ?PINGREQ -> pingreq;
+    ?PINGRESP -> pingresp;
+    ?DISCONNECT -> disconnect;
+    _ -> unknown
+  end.
+ 
 encode_string(String) ->
   Bytes = list_to_binary(String),
   Length = size(Bytes),
@@ -415,14 +439,7 @@ recv(Length, Context) ->
   end.
 
 send(#mqtt{} = Message, Context) ->
-  ?LOG({send, Message}),
-  if
-    Message#mqtt.dup =:= 0, Message#mqtt.qos > 0, Message#mqtt.qos < 3 ->
-      %% put_stored_message(Message, Context);
-      keep;
-    true ->
-      do_not_keep
-  end,
+  ?LOG({mqtt_core, send, pretty(Message)}),
   ok = send(encode_fixed_header(Message), Context),
   ok = send_length(size(Message#mqtt.variable_header) + size(Message#mqtt.payload), Context),
   ok = send(Message#mqtt.variable_header, Context),
@@ -444,7 +461,7 @@ send(Bytes, Context) when is_binary(Bytes) ->
 pretty(Message) when is_record(Message, mqtt) ->
   lists:flatten(
     io_lib:format(
-      "<matt id=~w type=~w dup=~w qos=~w retain=~w variable_header=~w payload=~w, hint=~w>", 
-      [Message#mqtt.id, Message#mqtt.type, Message#mqtt.dup, Message#mqtt.qos, Message#mqtt.retain, Message#mqtt.variable_header, Message#mqtt.payload, Message#mqtt.hint]
+      "<matt id=~w type=~w (~w) dup=~w qos=~w retain=~w variable_header=~w payload=~w hint=~w>", 
+      [Message#mqtt.id, Message#mqtt.type, command_for_type(Message#mqtt.type), Message#mqtt.dup, Message#mqtt.qos, Message#mqtt.retain, Message#mqtt.variable_header, Message#mqtt.payload, Message#mqtt.hint]
     )
   ).

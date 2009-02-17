@@ -2,7 +2,7 @@
 %% An erlang client for MQTT (http://www.mqtt.org/)
 %%
 
--define(LOG(Msg), io:format("{~p:~p}: ~p~n", [?MODULE, ?LINE, Msg])).
+-define(LOG(Msg), io:format("{~p:~p ~p}: ~p~n", [?MODULE, ?LINE, self(), Msg])).
 
 -define(MQTT_PORT, 1883).
 
@@ -33,17 +33,6 @@
 -record(context, {
   pid,
   socket
-}).
-
--record(client, {
-  context,
-  id_pid,
-  owner_pid,
-  send_store_pid,
-  recv_store_pid,
-  subscriptions = [],
-  ping_timer,
-  retry_timer
 }).
 
 -record(connect_options, {
