@@ -6,10 +6,40 @@
 
 -include_lib("mqtt.hrl").
 
--export([start/0]).
+-export([start/0, put_message/2, get_all_messages/1, get_message/2, delete_message/2]).
 
 start() ->
   store_loop(dict:new()).
+
+put_message(Message, StorePid) ->
+  StorePid ! {store, put, Message, self()},
+  receive
+    {store, ok} ->
+      ok
+  end.
+
+get_all_messages(StorePid) ->
+  StorePid ! {store, get, all, self()},
+  receive
+    {store, get, ok, Results} ->
+      Results
+  end.
+
+get_message(MessageId, StorePid) ->
+  StorePid ! {store, get, MessageId, self()},
+  receive
+    {store, get, ok, Result} ->
+      Result;
+    {store, get, not_found} ->
+      exit({store, get, MessageId, not_found})
+  end.
+
+delete_message(MessageId, StorePid) ->
+  StorePid ! {store, delete, MessageId, self()},
+  receive
+    {store, ok} ->
+      ok
+  end.
 
 store_loop(State) ->
   NewState = receive
