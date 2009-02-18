@@ -172,8 +172,11 @@ client_loop(State) ->
   client_loop(NewState).
 
 default_client_id() ->
-  {{Y,Mon,D},{H,Min,S}} = erlang:localtime(),
-  lists:flatten(io_lib:format("~B-~2.10.0B-~2.10.0B-~2.10.0B-~2.10.0B-~2.10.0B-~w",[Y, Mon, D, H, Min, S, self()])).
+  {{_Y,Mon,D},{H,Min,S}} = erlang:localtime(),
+  lists:flatten(io_lib:format(
+    "~2.10.0B~2.10.0B~2.10.0B~2.10.0B~2.10.0B~w",
+    [Mon, D, H, Min, S, self()]
+  )).
 
 add_subscriptions([], [], Subscriptions) ->
   Subscriptions;
