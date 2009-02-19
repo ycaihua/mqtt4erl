@@ -52,9 +52,7 @@
   dup = 0,
   qos = 0,
   retain = 0,
-  variable_header = <<>>,
-  payload = <<>>,
-  hint
+  arg
 }).
 
 -record(sub, {

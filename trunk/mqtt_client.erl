@@ -36,11 +36,11 @@ connect(Host, Port, Options) ->
         ClientState = #client{
           context = Context,
           owner_pid = OwnerPid,
-          id_pid = spawn_link(fun() -> id_loop() end),
+          id_pid = spawn_link(fun() -> id:start() end),
           inbox_pid = spawn_link(fun() -> store:start() end),
           outbox_pid = spawn_link(fun() -> store:start() end)
         },
-        ok = send(mqtt_core:construct_message({connect, Host, Port, O}), ClientState),
+        ok = send(#mqtt{type = ?CONNECT, arg = {Host, Port, O}}, ClientState),
         spawn_link(fun() -> mqtt_core:recv_loop(Context)  end),
         receive
           #mqtt{type = ?CONNACK} ->
@@ -101,59 +101,67 @@ get_message() ->
 
 client_loop(State) ->
   NewState = receive
-    {?MODULE, subscribe, Topics} ->
-      ok = send(construct_id_message({subscribe, Topics}, State), State),
+    {?MODULE, subscribe, Subs} ->
+      ok = send(#mqtt{type = ?SUBSCRIBE, qos = 1, arg = Subs}, State),
       State;
     {?MODULE, unsubscribe, Unsubs} ->
-      ok = send(construct_id_message({unsubscribe, Unsubs}, State), State),
+      ok = send(#mqtt{type = ?UNSUBSCRIBE, qos = 1, arg = Unsubs}, State),
       State;
     {?MODULE, publish, Topic, Payload, Options} ->
       O = mqtt_core:set_publish_options(Options),
       Message = if
         O#publish_options.qos > 0 ->
-          construct_id_message({publish, Topic, Payload, O}, State);
+          #mqtt{
+            type = ?PUBLISH,
+            qos = O#publish_options.qos,
+            arg = {Topic, Payload, O}
+           };
         true ->
-          mqtt_core:construct_message({publish, Topic, Payload, O})
+          #mqtt{
+            type = ?PUBLISH,
+            qos = O#publish_options.qos,
+            arg = {Topic, Payload, O}
+          }
       end,
       ok = send(Message, State),
       State;
     {?MODULE, disconnect} ->
-      ok = send(mqtt_core:construct_message(disconnect), State),
+      ok = send(#mqtt{type = ?DISCONNECT}, State),
       State;
     {?MODULE, subscriptions, FromPid} ->
       FromPid ! {?MODULE, subscriptions, State#client.subscriptions},
       State;
-    #mqtt{type = ?PUBLISH, qos = 2, hint = {_, Topic, Payload}} = Message ->
+    #mqtt{type = ?PUBLISH, qos = 2, arg = {_, Topic, Payload}} = Message ->
       ?LOG({client, received, qos, 2, Topic, Payload}),
       store:put_message(Message, State#client.inbox_pid),
       State;
-    #mqtt{type = ?PUBLISH, hint = {_, Topic, Payload}} ->
+    #mqtt{type = ?PUBLISH, arg = {_, Topic, Payload}} ->
       ?LOG({client, received, qos_less_than, 2, Topic, Payload}),
       State#client.owner_pid ! {?MODULE, received, Topic, Payload},
       State;
-    #mqtt{type = ?SUBACK, hint = {MessageId, GrantedQoS}} ->
+    #mqtt{type = ?SUBACK, arg = {MessageId, GrantedQoS}} ->
       State#client.owner_pid ! {?MODULE, subscription, updated},
-      PendingSubs = (store:get_message(MessageId, State#client.outbox_pid))#mqtt.hint,
+      PendingSubs = (store:get_message(MessageId, State#client.outbox_pid))#mqtt.arg,
       store:delete_message(MessageId, State#client.outbox_pid),
       State#client{
         subscriptions = add_subscriptions(PendingSubs, GrantedQoS, State#client.subscriptions)
       };
-    #mqtt{type = ?UNSUBACK, hint = MessageId} ->
+    #mqtt{type = ?UNSUBACK, arg = MessageId} ->
       State#client.owner_pid ! {?MODULE, subscription, updated},
-      PendingUnsubs = (store:get_message(MessageId, State#client.outbox_pid))#mqtt.hint,
+      PendingUnsubs = (store:get_message(MessageId, State#client.outbox_pid))#mqtt.arg,
       store:delete_message(MessageId, State#client.outbox_pid),
       State#client{
         subscriptions = remove_subscriptions(PendingUnsubs, State#client.subscriptions)
       };
-    #mqtt{type = ?PUBACK, hint = MessageId} ->
+    #mqtt{type = ?PUBACK, arg = MessageId} ->
       store:delete_message(MessageId, State#client.outbox_pid),
       State;
-    #mqtt{type = ?PUBREL, hint = MessageId} ->
-      #mqtt{type = ?PUBLISH, hint = {_, Topic, Payload}} = store:get_message(MessageId, State#client.inbox_pid),
+    #mqtt{type = ?PUBREL, arg = MessageId} ->
+      #mqtt{type = ?PUBLISH, arg = {_, Topic, Payload}} = store:get_message(MessageId, State#client.inbox_pid),
       State#client.owner_pid ! {?MODULE, received, Topic, Payload},
       store:delete_message(MessageId, State#client.inbox_pid),
       State;
-    #mqtt{type = ?PUBCOMP, hint = MessageId} ->
+    #mqtt{type = ?PUBCOMP, arg = MessageId} ->
       store:delete_message(MessageId, State#client.outbox_pid),
       State;
     {subscriptions, FromPid} ->
@@ -189,25 +197,6 @@ remove_subscriptions([], Subscriptions) ->
 remove_subscriptions([{sub, Topic, _QoS}|Unsubs], Subscriptions) ->
   remove_subscriptions(Unsubs, lists:keydelete(Topic, 2, Subscriptions)).
 
-construct_id_message(Request, State) ->
-  mqtt_core:construct_message(Request, #mqtt{id = id_get_incr(State)}).
-
-id_get_incr(State) ->
-  State#client.id_pid ! {get_incr, self()},
-  receive
-    {id, Id} ->
-      Id
-  end.
-
-id_loop() ->
-  id_loop(1).
-id_loop(Sequence) ->
-  receive
-    {get_incr, From} ->
-      From ! {id, Sequence}
-  end,
-  id_loop(Sequence + 1).
-
 resend_unack(State) ->
   lists:foreach(fun({_MessageId, Message}) ->
     ?LOG({resend, mqtt_core:pretty(Message)}),
@@ -215,11 +204,13 @@ resend_unack(State) ->
   end, store:get_all_messages(State#client.outbox_pid)).
 
 send(#mqtt{} = Message, State) ->
-  ?LOG({client, send, Message}),
-  if
-    Message#mqtt.dup =:= 0, Message#mqtt.qos > 0, Message#mqtt.qos < 3 ->
-      ok = store:put_message(Message, State#client.outbox_pid);
+  ?LOG({client, send, mqtt_core:pretty(Message)}),
+  SendableMessage = if
+    Message#mqtt.dup =:= 0, Message#mqtt.qos > 0 ->
+      IdMessage = Message#mqtt{id = id:get_incr(State#client.id_pid)},
+      ok = store:put_message(IdMessage, State#client.outbox_pid),
+      IdMessage;
     true ->
-      do_not_keep
+      Message
   end,
-  mqtt_core:send(Message, State#client.context).
+  mqtt_core:send(SendableMessage, State#client.context).
