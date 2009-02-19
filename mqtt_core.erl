@@ -9,126 +9,7 @@
 
 -compile(export_all).
 
--export([construct_message/1, construct_message/2,  set_connect_options/1, set_publish_options/1, decode_message/2, recv_loop/1, send_ping/1, send/2]).
-
-construct_message(Request) ->
-  construct_message(Request, #mqtt{}).
-construct_message({connack, ReturnCode}, Prototype) ->
-  Prototype#mqtt{
-    type = ?CONNACK,
-    variable_header = <<?UNUSED:8, ReturnCode:8/big>>
-  };
-construct_message({connect, _Host, _Port, #connect_options{} = Options}, Prototype) ->
-  CleanStart = case Options#connect_options.clean_start of
-    true ->
-      1;
-    false ->
-      0
-  end,
-  {WillFlag, WillQoS, WillRetain, Payload} = case Options#connect_options.will of
-    {will, WillTopic, WillMessage, WillOptions} ->
-      O = set_publish_options(WillOptions),
-      {
-        1, O#publish_options.qos, O#publish_options.retain,
-        list_to_binary([encode_string(Options#connect_options.client_id), encode_string(WillTopic), encode_string(WillMessage)])
-      }; 
-    undefined ->
-      {0, 0, 0, encode_string(Options#connect_options.client_id)}
-  end,
-  Prototype#mqtt{
-    type = ?CONNECT,
-    variable_header = list_to_binary([
-      encode_string(Options#connect_options.protocol_name),
-      <<(Options#connect_options.protocol_version)/big>>, 
-      <<?UNUSED:2, WillRetain:1, WillQoS:2/big, WillFlag:1, CleanStart:1, ?UNUSED:1, (Options#connect_options.keepalive):16/big>>]
-    ),
-    payload = Payload
-  };
-construct_message({publish, Topic, Payload, Options}, Prototype) ->
-  Message = if
-    Options#publish_options.qos =:= 0 ->
-      Prototype#mqtt{
-        type = ?PUBLISH,
-        retain = Options#publish_options.retain,
-        variable_header = encode_string(Topic),
-        payload = encode_string(Payload)
-      };
-    Options#publish_options.qos =:= 1; Options#publish_options.qos =:= 2 ->
-      MessageId = Prototype#mqtt.id,
-      Prototype#mqtt{
-        type = ?PUBLISH,
-        qos = Options#publish_options.qos,
-        retain = Options#publish_options.retain,
-        variable_header = list_to_binary([encode_string(Topic), <<MessageId:16/big>>]),
-        payload = encode_string(Payload)
-      }
-  end,
-  Message;
-construct_message({puback, MessageId}, Prototype) ->
-  Prototype#mqtt{
-    type = ?PUBACK,
-    variable_header = <<MessageId:16/big>>
-  };
-construct_message({subscribe, Subs}, Prototype) ->
-  MessageId = Prototype#mqtt.id,
-  Prototype#mqtt{
-    id = MessageId,
-    type = ?SUBSCRIBE, 
-    qos = 1,
-    variable_header = <<MessageId:16/big>>,
-    payload = list_to_binary( lists:flatten( lists:map(fun({sub, Topic, RequestedQoS}) -> [encode_string(Topic), <<?UNUSED:6, RequestedQoS:2/big>>] end, Subs))),
-    hint = Subs
-  };
-construct_message({suback, {MessageId, Subs}}, Prototype) ->
-  Prototype#mqtt{
-    type = ?SUBACK,
-    variable_header = <<MessageId:16/big>>,
-    payload = list_to_binary(lists:map(fun(S) -> <<?UNUSED:6, (S#sub.qos):2/big>> end, Subs))
-  }; 
-construct_message({unsubscribe, Subs}, Prototype) ->
-  MessageId = Prototype#mqtt.id,
-  Prototype#mqtt{
-    id = MessageId,
-    type = ?UNSUBSCRIBE,
-    qos = 1,
-    variable_header = <<MessageId:16/big>>,
-    payload = list_to_binary(lists:map(fun({sub, T, _Q}) -> encode_string(T) end, Subs)),
-    hint = Subs
-  };
-construct_message({unsuback, MessageId}, Prototype) ->
-  Prototype#mqtt{
-    type = ?UNSUBACK,
-    variable_header = <<MessageId:16/big>>
-  }; 
-construct_message(pingreq, Prototype) ->
-  Prototype#mqtt{
-    type = ?PINGREQ
-  };
-construct_message(pingresp, Prototype) ->
-  Prototype#mqtt{
-    type = ?PINGRESP
-  };
-construct_message({pubrec, MessageId}, Prototype) ->
-  Prototype#mqtt{
-    type = ?PUBREC,
-    variable_header = <<MessageId:16/big>>
-  };
-construct_message({pubrel, MessageId}, Prototype) ->
-  Prototype#mqtt{
-    type = ?PUBREL,
-    variable_header = <<MessageId:16/big>>
-  };
-construct_message({pubcomp, MessageId}, Prototype) ->
-  Prototype#mqtt{
-    type = ?PUBCOMP,
-    variable_header = <<MessageId:16/big>>
-  };
-construct_message(disconnect, Prototype) ->
-  Prototype#mqtt{
-    type = ?DISCONNECT
-  };
-construct_message(Request, _Prototype) ->
-  exit({contruct_message, unknown_type, Request}).
+-export([set_connect_options/1, set_publish_options/1, decode_message/2, recv_loop/1, send_ping/1, encode_message/1, send/2]).
 
 set_connect_options(Options) ->
   set_connect_options(Options, #connect_options{}).
@@ -178,9 +59,7 @@ decode_message(#mqtt{type = ?CONNECT} = Message, Rest) ->
       {C, undefined}
   end,
   Message#mqtt{
-    variable_header = VariableHeader,
-    payload = Payload,
-    hint = #connect_options{
+    arg = #connect_options{
       client_id = ClientId,
       protocol_name = binary_to_list(ProtocolName),
       protocol_version = ProtocolVersion,
@@ -191,27 +70,23 @@ decode_message(#mqtt{type = ?CONNECT} = Message, Rest) ->
   };
 decode_message(#mqtt{type = ?CONNACK} = Message, Rest) ->
   <<_:8, ResponseCode:8/big>> = Rest,
-  Message#mqtt{variable_header = Rest, hint = ResponseCode};
+  Message#mqtt{arg = ResponseCode};
 decode_message(#mqtt{type = ?PINGRESP} = Message, _Rest) ->
   Message;
 decode_message(#mqtt{type = ?PINGREQ} = Message, _Rest) ->
   Message;
 decode_message(#mqtt{type = ?PUBLISH, qos = 0} = Message, Rest) ->
   {<<TopicLength:16/big>>, _} = split_binary(Rest, 2),
-  {<<_:16, Topic/binary>> = VariableHeader, Payload} = split_binary(Rest, 2 + TopicLength),
+  {<<_:16, Topic/binary>>, Payload} = split_binary(Rest, 2 + TopicLength),
   Message#mqtt{
-    variable_header = VariableHeader,
-    payload = Payload,
-    hint = {undefined, binary_to_list(Topic), Payload}
+    arg = {undefined, binary_to_list(Topic), Payload}
   };
 decode_message(#mqtt{type = ?PUBLISH} = Message, Rest) ->
   {<<TopicLength:16/big>>, _} = split_binary(Rest, 2),
-  {<<_:16, Topic:TopicLength/binary, MessageId:16/big>> = VariableHeader, Payload} = split_binary(Rest, 4 + TopicLength),
+  {<<_:16, Topic:TopicLength/binary, MessageId:16/big>>, Payload} = split_binary(Rest, 4 + TopicLength),
    Message#mqtt{
     id = MessageId,
-    variable_header = VariableHeader,
-    payload = Payload,
-    hint = {MessageId, binary_to_list(Topic), Payload}
+    arg = {MessageId, binary_to_list(Topic), Payload}
   };
 decode_message(#mqtt{type = Type} = Message, Rest)
     when
@@ -221,21 +96,16 @@ decode_message(#mqtt{type = Type} = Message, Rest)
       Type =:= ?PUBCOMP ->
   <<MessageId:16/big>> = Rest,
   Message#mqtt{
-    variable_header = Rest,
-    hint = MessageId
+    arg = MessageId
   };
 decode_message(#mqtt{type = ?SUBSCRIBE} = Message, Rest) ->
-  {VariableHeader, Payload} = split_binary(Rest, 2),
-  <<MessageId:16/big>> = VariableHeader,
+  {<<MessageId:16/big>>, Payload} = split_binary(Rest, 2),
   Message#mqtt{
     id = MessageId,
-    variable_header = VariableHeader,
-    payload = Payload,
-    hint = {MessageId, decode_subs(Payload, [])}
+    arg = decode_subs(Payload, [])
   };
 decode_message(#mqtt{type = ?SUBACK} = Message, Rest) ->
-  {VariableHeader, Payload} = split_binary(Rest, 2),
-  <<MessageId:16/big>> = VariableHeader,
+  {<<MessageId:16/big>>, Payload} = split_binary(Rest, 2),
   GrantedQoS  = lists:map(fun(Item) ->
       <<_:6, QoS:2/big>> = <<Item>>,
       QoS
@@ -243,24 +113,18 @@ decode_message(#mqtt{type = ?SUBACK} = Message, Rest) ->
     binary_to_list(Payload)
   ),
   Message#mqtt{
-    variable_header = VariableHeader,
-    payload = Payload,
-    hint = {MessageId, GrantedQoS}
+    arg = {MessageId, GrantedQoS}
   };
 decode_message(#mqtt{type = ?UNSUBSCRIBE} = Message, Rest) ->
-  {VariableHeader, Payload} = split_binary(Rest, 2),
-  <<MessageId:16/big>> = VariableHeader,
+  {<<MessageId:16/big>>, Payload} = split_binary(Rest, 2),
   Message#mqtt{
     id = MessageId,
-    variable_header = VariableHeader,
-    payload = Payload,
-    hint = {MessageId, lists:map(fun(T) -> #sub{topic = T} end, decode_strings(Payload))}
+    arg = {MessageId, lists:map(fun(T) -> #sub{topic = T} end, decode_strings(Payload))}
   };
 decode_message(#mqtt{type = ?UNSUBACK} = Message, Rest) ->
   <<MessageId:16/big>> = Rest,
   Message#mqtt{
-    variable_header = Rest,
-    hint = MessageId
+    arg = MessageId
   };
 decode_message(Message, Rest) ->
   exit({decode_message, unexpected_message, {Message, Rest}}).
@@ -287,7 +151,7 @@ process(#mqtt{type = ?CONNECT} = Message, Context) ->
   ok;
 process(#mqtt{type = ?CONNACK} = Message, Context) ->
   ?LOG({recv, process, connack}),
-  ReturnCode = Message#mqtt.hint,
+  ReturnCode = Message#mqtt.arg,
   case ReturnCode of
     0 ->
       Context#context.pid ! Message;
@@ -304,50 +168,50 @@ process(#mqtt{type = ?PINGRESP}, _Context) ->
   ok;
 process(#mqtt{type = ?PINGREQ}, Context) ->
   ?LOG({recv, process, pingreq}),
-  send(construct_message(pingresp), Context),
+  send(#mqtt{type = ?PINGRESP}, Context),
   ok;
 process(#mqtt{type = ?PUBLISH, qos = 0} = Message, Context) ->
   ?LOG({recv, publish, Message}),
   Context#context.pid ! Message,
   ok;
 %% TODO should the next 2 be synchronous deliveries, for correctness?
-process(#mqtt{type = ?PUBLISH, qos = 1, hint = {MessageId, _, _}} = Message, Context) ->
+process(#mqtt{type = ?PUBLISH, qos = 1, arg = {MessageId, _, _}} = Message, Context) ->
   ?LOG({recv, publish, Message}),
   Context#context.pid ! Message,
-  send(construct_message({puback, MessageId}), Context),
+  send(#mqtt{type = ?PUBACK, arg = MessageId}, Context),
   ok;
-process(#mqtt{type = ?PUBLISH, qos = 2, hint = {MessageId, _, _}} = Message, Context) ->
+process(#mqtt{type = ?PUBLISH, qos = 2, arg = {MessageId, _, _}} = Message, Context) ->
   ?LOG({recv, publish, Message}),
   Context#context.pid ! Message,
-  send(construct_message({pubrec, MessageId}), Context),
+  send(#mqtt{type = ?PUBREC, arg = MessageId}, Context),
   ok;
 process(#mqtt{type = ?PUBACK} = Message, Context) ->
   ?LOG({recv, puback, Message}),
   Context#context.pid ! Message,
   ok;
-process(#mqtt{type = ?PUBREC, hint = MessageId} = _Message, Context) ->
+process(#mqtt{type = ?PUBREC, arg = MessageId} = _Message, Context) ->
   ?LOG({recv, pubrec, MessageId}),
-  send(construct_message({pubrel, MessageId}), Context),
+  send(#mqtt{type = ?PUBREL, arg = MessageId}, Context),
   ok;
-process(#mqtt{type = ?PUBREL, hint = MessageId} = Message, Context) ->
+process(#mqtt{type = ?PUBREL, arg = MessageId} = Message, Context) ->
   ?LOG({recv, pubrel, MessageId}),
   Context#context.pid ! Message,
-  send(construct_message({pubcomp, MessageId}), Context),
+  send(#mqtt{type = ?PUBCOMP, arg = MessageId}, Context),
   ok;
-process(#mqtt{type = ?PUBCOMP, hint = MessageId} = Message, Context) ->
+process(#mqtt{type = ?PUBCOMP, arg = MessageId} = Message, Context) ->
   ?LOG({recv, pubcomp, MessageId}),
   Context#context.pid ! Message,
   ok;
 process(#mqtt{type = ?SUBSCRIBE} = Message, Context) ->
-  ?LOG({recv, subscribe, Message#mqtt.hint}),
+  ?LOG({recv, subscribe, Message#mqtt.arg}),
   Context#context.pid ! Message,
   ok;
 process(#mqtt{type = ?SUBACK} = Message, Context) ->
-  ?LOG({recv, suback, Message#mqtt.hint}),
+  ?LOG({recv, suback, Message#mqtt.arg}),
   Context#context.pid ! Message,
   ok;
 process(#mqtt{type = ?UNSUBSCRIBE} = Message, Context) ->
-  ?LOG({recv, unsubscribe, Message#mqtt.hint}),
+  ?LOG({recv, unsubscribe, Message#mqtt.arg}),
   Context#context.pid ! Message,
   ok;
 process(#mqtt{type = ?UNSUBACK} = Message, Context) ->
@@ -360,19 +224,84 @@ process(Msg, _Context) ->
 
 send_ping(Context) ->
   ?LOG({send, ping}),
-  mqtt_core:send(mqtt_core:construct_message(pingreq), Context).
+  send(#mqtt{type = ?PINGREQ}, Context).
 
-%%put_stored_message(Message, Context) ->
-%%  Context#context.store_pid ! {store, put, Message}.
-
-%%get_stored_message(MessageId, Context) ->
-%%  Context#context.store_pid ! {store, get, MessageId, self()},
-%%  receive
-%%    {store, get, ok, Result} ->
-%%      Result;
-%%    {store, get, not_found} ->
-%%      exit({store, get, MessageId, not_found})
-%%  end.
+encode_message(#mqtt{type = ?CONNACK, arg = ReturnCode}) ->
+  {<<?UNUSED:8, ReturnCode:8/big>>,<<>>};
+encode_message(#mqtt{type = ?CONNECT, arg = {_Host, _Port, #connect_options{} = Options}}) ->
+  CleanStart = case Options#connect_options.clean_start of
+    true ->
+      1;
+    false ->
+      0
+  end,
+  {WillFlag, WillQoS, WillRetain, Payload} = case Options#connect_options.will of
+    {will, WillTopic, WillMessage, WillOptions} ->
+      O = set_publish_options(WillOptions),
+      {
+        1, O#publish_options.qos, O#publish_options.retain,
+        list_to_binary([encode_string(Options#connect_options.client_id), encode_string(WillTopic), encode_string(WillMessage)])
+      }; 
+    undefined ->
+      {0, 0, 0, encode_string(Options#connect_options.client_id)}
+  end,
+  {
+    list_to_binary([
+      encode_string(Options#connect_options.protocol_name),
+      <<(Options#connect_options.protocol_version)/big>>, 
+      <<?UNUSED:2, WillRetain:1, WillQoS:2/big, WillFlag:1, CleanStart:1, ?UNUSED:1, (Options#connect_options.keepalive):16/big>>
+    ]),
+    Payload
+  };
+encode_message(#mqtt{type = ?PUBLISH, arg = {Topic, Payload, Options}} = Message) ->
+  if
+    Options#publish_options.qos =:= 0 ->
+        {
+          encode_string(Topic),
+          encode_string(Payload)
+        };
+    Options#publish_options.qos =:= 1; Options#publish_options.qos =:= 2 ->
+        {
+          list_to_binary([encode_string(Topic), <<(Message#mqtt.id):16/big>>]),
+          encode_string(Payload)
+        }
+  end;
+encode_message(#mqtt{type = ?PUBACK, arg = MessageId}) ->
+  {
+    <<MessageId:16/big>>,
+    <<>>
+  };
+encode_message(#mqtt{type = ?SUBSCRIBE, arg = Subs} = Message) ->
+  {
+    <<(Message#mqtt.id):16/big>>,
+    list_to_binary( lists:flatten( lists:map(fun({sub, Topic, RequestedQoS}) -> [encode_string(Topic), <<?UNUSED:6, RequestedQoS:2/big>>] end, Subs)))
+  };
+encode_message(#mqtt{type = ?SUBACK, arg = {MessageId, Subs}}) ->
+  {
+    <<MessageId:16/big>>,
+    list_to_binary(lists:map(fun(S) -> <<?UNUSED:6, (S#sub.qos):2/big>> end, Subs))
+  }; 
+encode_message(#mqtt{type = ?UNSUBSCRIBE, arg = Subs} = Message) ->
+  {
+    <<(Message#mqtt.id):16/big>>,
+    list_to_binary(lists:map(fun({sub, T, _Q}) -> encode_string(T) end, Subs))
+  };
+encode_message(#mqtt{type = ?UNSUBACK, arg = MessageId}) ->
+  {<<MessageId:16/big>>, <<>>}; 
+encode_message(#mqtt{type = ?PINGREQ}) ->
+  {<<>>, <<>>};
+encode_message(#mqtt{type = ?PINGRESP}) ->
+  {<<>>, <<>>};
+encode_message(#mqtt{type = ?PUBREC, arg = MessageId}) ->
+  {<<MessageId:16/big>>, <<>>};
+encode_message(#mqtt{type = ?PUBREL, arg = MessageId}) ->
+  {<<MessageId:16/big>>, <<>>};
+encode_message(#mqtt{type = ?PUBCOMP, arg = MessageId}) ->
+  {<<MessageId:16/big>>, <<>>};
+encode_message(#mqtt{type = ?DISCONNECT}) ->
+  {<<>>, <<>>};
+encode_message(#mqtt{} = Message) ->
+  exit({encode_message, unknown_type, Message}).
 
 recv_length(Context) ->
   recv_length(recv(1, Context), 1, 0, Context).
@@ -440,10 +369,11 @@ recv(Length, Context) ->
 
 send(#mqtt{} = Message, Context) ->
   ?LOG({mqtt_core, send, pretty(Message)}),
+  {VariableHeader, Payload} = encode_message(Message),
   ok = send(encode_fixed_header(Message), Context),
-  ok = send_length(size(Message#mqtt.variable_header) + size(Message#mqtt.payload), Context),
-  ok = send(Message#mqtt.variable_header, Context),
-  ok = send(Message#mqtt.payload, Context),
+  ok = send_length(size(VariableHeader) + size(Payload), Context),
+  ok = send(VariableHeader, Context),
+  ok = send(Payload, Context),
   ok;
 send(<<>>, _Context) ->
 %%?LOG({send, no_bytes}),
@@ -461,7 +391,7 @@ send(Bytes, Context) when is_binary(Bytes) ->
 pretty(Message) when is_record(Message, mqtt) ->
   lists:flatten(
     io_lib:format(
-      "<matt id=~w type=~w (~w) dup=~w qos=~w retain=~w variable_header=~w payload=~w hint=~w>", 
-      [Message#mqtt.id, Message#mqtt.type, command_for_type(Message#mqtt.type), Message#mqtt.dup, Message#mqtt.qos, Message#mqtt.retain, Message#mqtt.variable_header, Message#mqtt.payload, Message#mqtt.hint]
+      "<matt id=~w type=~w (~w) dup=~w qos=~w retain=~w arg=~w>", 
+      [Message#mqtt.id, Message#mqtt.type, command_for_type(Message#mqtt.type), Message#mqtt.dup, Message#mqtt.qos, Message#mqtt.retain, Message#mqtt.arg]
     )
   ).

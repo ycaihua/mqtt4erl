@@ -66,7 +66,7 @@ store_loop(State) ->
       FromPid ! {store, ok},
       dict:erase(MessageId, State);
     Msg ->
-      ?LOG({message_store, unexpected_message, Msg}),
+      ?LOG({message_store, unexpected_message, mqtt_core:pretty(Msg)}),
       State
   end,
   store_loop(NewState).

@@ -14,7 +14,9 @@
 -record(client_proxy, {
   broker,
   context,
+  client_id,
   ping_timer
+  id_pid
 }).
 
 start() ->
@@ -66,36 +68,42 @@ clientproxy_loop(State) ->
           mqtt_core:send(mqtt_core:construct_message({connack, 0}), State#client_proxy.context)
       end,
       State#client_proxy{
-        ping_timer = timer:apply_interval(O#connect_options.keepalive * 1000, mqtt_core, send_ping, [State#client_proxy.context])
+        client_id = O#connect_options.client_id,
+        ping_timer = timer:apply_interval(O#connect_options.keepalive * 1000, mqtt_core, send_ping, [State#client_proxy.context]),
+        id_pid = spawn_link(fun() -> id:start() end)
       };
     #mqtt{type = ?SUBSCRIBE, hint = Hint} ->
       ?LOG({client_loop, subscribe, Hint}),
       {_, Subs} = Hint,
-      (State#client_proxy.broker)#broker.sub_pid ! {sub, add, self(), Subs},
+      (State#client_proxy.broker)#broker.sub_pid ! {sub, add, State#client_proxy.client_id, self(), Subs},
       mqtt_core:send(mqtt_core:construct_message({suback, Hint}), State#client_proxy.context),
       State;
     #mqtt{type = ?UNSUBSCRIBE, hint = Hint} ->
       ?LOG({client_loop, unsubscribe, Hint}),
       {MessageId, Unsubs} = Hint,
-      (State#client_proxy.broker)#broker.sub_pid ! {sub, remove, self(), Unsubs},
+      (State#client_proxy.broker)#broker.sub_pid ! {sub, remove, State#client_proxy.client_id, Unsubs},
       mqtt_core:send(mqtt_core:construct_message({unsuback, MessageId}), State#client_proxy.context),
       State;
-    {received, Message} ->
-      ?LOG({client_loop, got, Message}),
+    #mqtt{type = ?PUBLISH} = Message ->
+      ?LOG({client_loop, got, mqtt_core:pretty(Message)}),
       {_, Topic, _} = Message#mqtt.hint,
-      lists:foreach(fun({Pid, SubscribedQoS}) ->
+      lists:foreach(fun({_ClientId, Pid, SubscribedQoS}) ->
         AdjustedMessage = if
           Message#mqtt.qos > SubscribedQoS ->
             Message#mqtt{qos = SubscribedQoS};
-          _ ->
+          true ->
             Message
         end,
-        Pid ! {deliver, AdjustedMessage} 
+        Pid ! {deliver, AdjustedMessage}
       end, get_subscribers(Topic, State)),
       State;
-    {deliver, Message} ->
-      ?LOG({client_loop, deliver, Message}),
-      mqtt_core:send(Message, State#client_proxy.context),
+    {deliver, #mqtt{qos = 1} = Message} ->
+      ?LOG({client_loop, delivering, qos, 1, mqtt_core:pretty(Message)}),
+      {_, Topic, Payload} = hint,
+      construct_message()
+    {deliver, #mqtt{} = Message} ->
+      ?LOG({client_loop, delivering, mqtt_core:pretty(Message)}),
+      send(Message, State#client_proxy.context),
       State;
     {'EXIT', FromPid, Reason} ->
       %% send the will!
@@ -113,32 +121,42 @@ disconnect(State) ->
   %% remove from subscriptions
   timer:cancel(State#client_proxy.ping_timer).
 
+send(#mqtt{} = Message, State) ->
+  ?LOG({client_proxy, send, Message}),
+  if
+    Message#mqtt.dup =:= 0, Message#mqtt.qos > 0, Message#mqtt.qos < 3 ->
+      ok = store:put_message(Message, State#client_proxy.outbox_pid);
+    true ->
+      do_not_keep
+  end,
+  mqtt_core:send(Message, State#client_proxy.context).
+
 subscriber_loop() ->
   subscriber_loop(dict:new()).
 subscriber_loop(State) ->
   NewState = receive
-    {sub, add, ClientPid, Subs} ->
-      ?LOG({subscribers, add, ClientPid, Subs}),
+    {sub, add, ClientId, ClientPid, Subs} ->
+      ?LOG({subscribers, add, ClientId, ClientPid, Subs}),
       lists:foldl(fun(#sub{topic = Topic, qos = QoS}, InterimState) ->
         case dict:find(Topic, InterimState) of
           {ok, Subscribers} ->
-            dict:store(Topic, [{ClientPid, QoS}|lists:keydelete(ClientPid, 1, Subscribers)], InterimState);
+            dict:store(Topic, [{ClientId, ClientPid, QoS}|lists:keydelete(ClientId, 1, Subscribers)], InterimState);
           error ->
-            dict:store(Topic, [{ClientPid, QoS}], InterimState)
+            dict:store(Topic, [{ClientId, ClientPid, QoS}], InterimState)
         end
       end, State, Subs);
-    {sub, remove, ClientPid, all} ->
-      ?LOG({subscribers, remove, ClientPid, all}),
+    {sub, remove, ClientId, all} ->
+      ?LOG({subscribers, remove, ClientId, all}),
       lists:foldl(fun(Topic, InterimState) ->
         Subscribers = dict:fetch(Topic, InterimState),
-        dict:store(Topic, lists:keydelete(ClientPid, 1, Subscribers), InterimState)
+        dict:store(Topic, lists:keydelete(ClientId, 1, Subscribers), InterimState)
       end, State, dict:fetch_keys(State));
-    {sub, remove, ClientPid, Unubs} ->
-      ?LOG({subscribers, remove, ClientPid, Unubs}),
+    {sub, remove, ClientId, Unubs} ->
+      ?LOG({subscribers, remove, ClientId, Unubs}),
       lists:foldl(fun(#sub{topic = Topic}, InterimState) ->
         case dict:find(Topic, InterimState) of
           {ok, Subscribers} ->
-            dict:store(Topic, lists:keydelete(ClientPid, 1, Subscribers), InterimState);
+            dict:store(Topic, lists:keydelete(ClientId, 1, Subscribers), InterimState);
           error ->
             InterimState
         end
@@ -152,8 +170,10 @@ subscriber_loop(State) ->
       end,
       State;
     Message ->
-      ?LOG({subscribers, got, Message})
+      ?LOG({subscribers, got, Message}),
+      State
   end,
+  ?LOG({newstate, dict:to_list(NewState)}),
   subscriber_loop(NewState).
 
 get_subscribers(Topic, State) ->
