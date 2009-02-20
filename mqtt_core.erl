@@ -79,14 +79,14 @@ decode_message(#mqtt{type = ?PUBLISH, qos = 0} = Message, Rest) ->
   {<<TopicLength:16/big>>, _} = split_binary(Rest, 2),
   {<<_:16, Topic/binary>>, Payload} = split_binary(Rest, 2 + TopicLength),
   Message#mqtt{
-    arg = {undefined, binary_to_list(Topic), Payload}
+    arg = {binary_to_list(Topic), binary_to_list(Payload)}
   };
 decode_message(#mqtt{type = ?PUBLISH} = Message, Rest) ->
   {<<TopicLength:16/big>>, _} = split_binary(Rest, 2),
   {<<_:16, Topic:TopicLength/binary, MessageId:16/big>>, Payload} = split_binary(Rest, 4 + TopicLength),
    Message#mqtt{
     id = MessageId,
-    arg = {MessageId, binary_to_list(Topic), Payload}
+    arg = {binary_to_list(Topic), binary_to_list(Payload)}
   };
 decode_message(#mqtt{type = Type} = Message, Rest)
     when
@@ -175,15 +175,15 @@ process(#mqtt{type = ?PUBLISH, qos = 0} = Message, Context) ->
   Context#context.pid ! Message,
   ok;
 %% TODO should the next 2 be synchronous deliveries, for correctness?
-process(#mqtt{type = ?PUBLISH, qos = 1, arg = {MessageId, _, _}} = Message, Context) ->
+process(#mqtt{type = ?PUBLISH, qos = 1} = Message, Context) ->
   ?LOG({recv, publish, Message}),
   Context#context.pid ! Message,
-  send(#mqtt{type = ?PUBACK, arg = MessageId}, Context),
+  send(#mqtt{type = ?PUBACK, arg = Message#mqtt.id}, Context),
   ok;
-process(#mqtt{type = ?PUBLISH, qos = 2, arg = {MessageId, _, _}} = Message, Context) ->
+process(#mqtt{type = ?PUBLISH, qos = 2} = Message, Context) ->
   ?LOG({recv, publish, Message}),
   Context#context.pid ! Message,
-  send(#mqtt{type = ?PUBREC, arg = MessageId}, Context),
+  send(#mqtt{type = ?PUBREC, arg = Message#mqtt.id}, Context),
   ok;
 process(#mqtt{type = ?PUBACK} = Message, Context) ->
   ?LOG({recv, puback, Message}),
@@ -218,8 +218,8 @@ process(#mqtt{type = ?UNSUBACK} = Message, Context) ->
   ?LOG({recv, unsuback, Message}),
   Context#context.pid ! Message,
   ok;
-process(Msg, _Context) ->
-  ?LOG({recv, process, unexpected_message, Msg}),
+process(Message, _Context) ->
+  ?LOG({recv, process, unexpected_message, pretty(Message)}),
   ok.
 
 send_ping(Context) ->
@@ -253,14 +253,14 @@ encode_message(#mqtt{type = ?CONNECT, arg = {_Host, _Port, #connect_options{} = 
     ]),
     Payload
   };
-encode_message(#mqtt{type = ?PUBLISH, arg = {Topic, Payload, Options}} = Message) ->
+encode_message(#mqtt{type = ?PUBLISH, arg = {Topic, Payload}} = Message) ->
   if
-    Options#publish_options.qos =:= 0 ->
+    Message#mqtt.qos =:= 0 ->
         {
           encode_string(Topic),
           encode_string(Payload)
         };
-    Options#publish_options.qos =:= 1; Options#publish_options.qos =:= 2 ->
+    Message#mqtt.qos > 0 ->
         {
           list_to_binary([encode_string(Topic), <<(Message#mqtt.id):16/big>>]),
           encode_string(Payload)
