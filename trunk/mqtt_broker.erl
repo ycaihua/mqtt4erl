@@ -7,6 +7,7 @@
 -export([start/0]).
 
 -record(broker, {
+  socket,
   sub_pid,
   registry_pid
 }).
@@ -27,19 +28,20 @@ start() ->
     {ok, ListenSocket} ->
       Pid = spawn(fun() ->
         gen_tcp:controlling_process(ListenSocket, self()),
-        server_loop(ListenSocket)
+        Broker = #broker{
+          socket = ListenSocket,
+          sub_pid = spawn_link(fun() -> subscriber_loop() end),
+          registry_pid = spawn_link(fun() -> registry_loop() end)
+        },
+        server_loop(Broker)
       end),
       {ok, Pid};
     {error, Reason} ->
         exit(Reason)
   end.
 
-server_loop(ListenSocket) ->
-  Broker = #broker{
-    sub_pid = spawn_link(fun() -> subscriber_loop() end),
-    registry_pid = spawn_link(fun() -> registry_loop() end)
-  },
-  {ok, ClientSocket} = gen_tcp:accept(ListenSocket),
+server_loop(State) ->
+  {ok, ClientSocket} = gen_tcp:accept(State#broker.socket),
   _ClientPid = spawn_link(fun() ->
     process_flag(trap_exit, true),
     Context = #context{
@@ -48,11 +50,11 @@ server_loop(ListenSocket) ->
     },
     spawn_link(fun() -> mqtt_core:recv_loop(Context) end),
     clientproxy_loop(#client_proxy{
-      broker = Broker,
+      broker = State,
       context = Context
     })
   end),
-  server_loop(ListenSocket).
+  server_loop(State).
 
 clientproxy_loop(State) ->
   NewState = receive
@@ -206,6 +208,7 @@ get_subscribers(Topic, State) ->
   end.
 
 registry_loop() ->
+  ?LOG({registry, start}),
   registry_loop(dict:new()).
 registry_loop(State) ->
   NewState = receive
