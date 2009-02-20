@@ -114,13 +114,15 @@ client_loop(State) ->
           #mqtt{
             type = ?PUBLISH,
             qos = O#publish_options.qos,
-            arg = {Topic, Payload, O}
+            retain = O#publish_options.retain,
+            arg = {Topic, Payload}
            };
         true ->
           #mqtt{
             type = ?PUBLISH,
             qos = O#publish_options.qos,
-            arg = {Topic, Payload, O}
+            retain = O#publish_options.retain,
+            arg = {Topic, Payload}
           }
       end,
       ok = send(Message, State),
@@ -131,11 +133,11 @@ client_loop(State) ->
     {?MODULE, subscriptions, FromPid} ->
       FromPid ! {?MODULE, subscriptions, State#client.subscriptions},
       State;
-    #mqtt{type = ?PUBLISH, qos = 2, arg = {_, Topic, Payload}} = Message ->
+    #mqtt{type = ?PUBLISH, qos = 2, arg = {Topic, Payload}} = Message ->
       ?LOG({client, received, qos, 2, Topic, Payload}),
       store:put_message(Message, State#client.inbox_pid),
       State;
-    #mqtt{type = ?PUBLISH, arg = {_, Topic, Payload}} ->
+    #mqtt{type = ?PUBLISH, arg = {Topic, Payload}} ->
       ?LOG({client, received, qos_less_than, 2, Topic, Payload}),
       State#client.owner_pid ! {?MODULE, received, Topic, Payload},
       State;
@@ -157,7 +159,7 @@ client_loop(State) ->
       store:delete_message(MessageId, State#client.outbox_pid),
       State;
     #mqtt{type = ?PUBREL, arg = MessageId} ->
-      #mqtt{type = ?PUBLISH, arg = {_, Topic, Payload}} = store:get_message(MessageId, State#client.inbox_pid),
+      #mqtt{type = ?PUBLISH, arg = {Topic, Payload}} = store:get_message(MessageId, State#client.inbox_pid),
       State#client.owner_pid ! {?MODULE, received, Topic, Payload},
       store:delete_message(MessageId, State#client.inbox_pid),
       State;
@@ -174,7 +176,7 @@ client_loop(State) ->
       State#client.owner_pid ! {?MODULE, disconnected},
       exit(Reason);
     Message ->
-      ?LOG({client, unexpected_message, Message}),
+      ?LOG({?MODULE, unexpected_message, Message}),
       State
   end,
   client_loop(NewState).
