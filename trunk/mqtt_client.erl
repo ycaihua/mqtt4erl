@@ -7,7 +7,7 @@
 
 -include_lib("mqtt.hrl").
 
--export([connect/1, connect/3, publish/3, subscribe/2, unsubscribe/2, disconnect/1, subscriptions/1, get_message/0, default_client_id/0, resend_unack/1]).
+-export([connect/1, connect/3, publish/3, subscribe/2, unsubscribe/2, disconnect/1, get_message/0, default_client_id/0, resend_unack/1]).
 
 -record(client, {
   context,
@@ -15,7 +15,6 @@
   owner_pid,
   inbox_pid,
   outbox_pid,
-  subscriptions = [],
   ping_timer,
   retry_timer
 }).
@@ -25,7 +24,7 @@ connect(Host) ->
 connect(Host, Port, Options) ->
   O = mqtt_core:set_connect_options(Options),
   OwnerPid = self(),
-  Pid = case gen_tcp:connect(Host, Port, [binary, {active, false}]) of
+  Pid = case gen_tcp:connect(Host, Port, [binary, {active, false}, {packet, raw}, {nodelay, true}]) of
     {ok, Socket} ->
       spawn_link(fun() ->
         process_flag(trap_exit, true),
@@ -71,27 +70,20 @@ publish(Pid, Topic, Message) ->
 subscribe(Pid, Topic) ->
   Pid ! {?MODULE, subscribe, [#sub{topic = Topic}]},
   receive
-    {?MODULE, subscription, updated} ->
+    {?MODULE, subscription, updated, _} ->
       ok
   end.
 
 unsubscribe(Pid, Topic) ->
   Pid ! {?MODULE, unsubscribe, [#sub{topic = Topic}]},
   receive
-    {?MODULE, subscription, updated} ->
+    {?MODULE, subscription, updated, _} ->
       ok
   end.
 
 disconnect(Pid) ->
   Pid ! {?MODULE, disconnect},
   ok.
-
-subscriptions(Pid) ->
-  Pid ! {?MODULE, subscriptions, self()},
-  receive
-    {?MODULE, subscriptions, Subscriptions} ->
-      Subscriptions
-  end.
 
 get_message() ->
   receive
@@ -130,9 +122,6 @@ client_loop(State) ->
     {?MODULE, disconnect} ->
       ok = send(#mqtt{type = ?DISCONNECT}, State),
       State;
-    {?MODULE, subscriptions, FromPid} ->
-      FromPid ! {?MODULE, subscriptions, State#client.subscriptions},
-      State;
     #mqtt{type = ?PUBLISH, qos = 2, arg = {Topic, Payload}} = Message ->
       ?LOG({client, received, qos, 2, Topic, Payload}),
       store:put_message(Message, State#client.inbox_pid),
@@ -142,19 +131,17 @@ client_loop(State) ->
       State#client.owner_pid ! {?MODULE, received, Topic, Payload},
       State;
     #mqtt{type = ?SUBACK, arg = {MessageId, GrantedQoS}} ->
-      State#client.owner_pid ! {?MODULE, subscription, updated},
       PendingSubs = (store:get_message(MessageId, State#client.outbox_pid))#mqtt.arg,
+      ?LOG({suback, PendingSubs}),
+      State#client.owner_pid ! {?MODULE, subscription, updated, merge_subs(PendingSubs, GrantedQoS)},
       store:delete_message(MessageId, State#client.outbox_pid),
-      State#client{
-        subscriptions = add_subscriptions(PendingSubs, GrantedQoS, State#client.subscriptions)
-      };
+      State;
     #mqtt{type = ?UNSUBACK, arg = MessageId} ->
-      State#client.owner_pid ! {?MODULE, subscription, updated},
       PendingUnsubs = (store:get_message(MessageId, State#client.outbox_pid))#mqtt.arg,
+      ?LOG({unsuback, PendingUnsubs}),
+      State#client.owner_pid ! {?MODULE, subscription, updated, PendingUnsubs},
       store:delete_message(MessageId, State#client.outbox_pid),
-      State#client{
-        subscriptions = remove_subscriptions(PendingUnsubs, State#client.subscriptions)
-      };
+      State;
     #mqtt{type = ?PUBACK, arg = MessageId} ->
       store:delete_message(MessageId, State#client.outbox_pid),
       State;
@@ -165,9 +152,6 @@ client_loop(State) ->
       State;
     #mqtt{type = ?PUBCOMP, arg = MessageId} ->
       store:delete_message(MessageId, State#client.outbox_pid),
-      State;
-    {subscriptions, FromPid} ->
-      FromPid ! {?MODULE, subscriptions, State#client.subscriptions},
       State;
     {'EXIT', FromPid, Reason} ->
       ?LOG({got, exit, FromPid, Reason}),
@@ -188,16 +172,12 @@ default_client_id() ->
     [Mon, D, H, Min, S, self()]
   )).
 
-add_subscriptions([], [], Subscriptions) ->
-  Subscriptions;
-add_subscriptions([{sub, Topic, _QoS} = S|Subs], [Q|QoS], Subscriptions) ->
-  NewSubs = [S#sub{qos = Q}|lists:keydelete(Topic, 2, Subscriptions)],
-  add_subscriptions(Subs, QoS, NewSubs).
-
-remove_subscriptions([], Subscriptions) ->
-  Subscriptions;
-remove_subscriptions([{sub, Topic, _QoS}|Unsubs], Subscriptions) ->
-  remove_subscriptions(Unsubs, lists:keydelete(Topic, 2, Subscriptions)).
+merge_subs(PendingSubs, GrantedQoS) ->
+  merge_subs(PendingSubs, GrantedQoS, []).
+merge_subs([], [], GrantedSubs) ->
+  lists:reverse(GrantedSubs);
+merge_subs([{sub, Topic, _}|PendingTail], [QoS|GrantedTail], GrantedSubs) ->
+  merge_subs(PendingTail, GrantedTail, [{sub, Topic, QoS}|GrantedSubs]).
 
 resend_unack(State) ->
   lists:foreach(fun({_MessageId, Message}) ->

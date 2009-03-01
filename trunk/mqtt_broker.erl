@@ -1,5 +1,10 @@
 -module(mqtt_broker).
 
+%% TODO
+%% - send retained messages on subscribe
+%% - clean up topics with no subscribers
+%% - support clean starts
+
 -include_lib("mqtt.hrl").
 
 -compile(export_all).
@@ -7,9 +12,7 @@
 -export([start/0]).
 
 -record(broker, {
-  socket,
-  sub_pid,
-  registry_pid
+  socket
 }).
 
 -record(client_proxy, {
@@ -20,18 +23,17 @@
   retry_timer,
   id_pid,
   inbox_pid,
-  outbox_pid
+  outbox_pid,
+  will
 }).
 
 start() ->
-  case gen_tcp:listen(?MQTT_PORT, [binary, {active, false}]) of
+  case gen_tcp:listen(?MQTT_PORT, [binary, {active, false}, {packet, raw}, {nodelay, true}]) of
     {ok, ListenSocket} ->
       Pid = spawn(fun() ->
         gen_tcp:controlling_process(ListenSocket, self()),
         Broker = #broker{
-          socket = ListenSocket,
-          sub_pid = spawn_link(fun() -> subscriber_loop() end),
-          registry_pid = spawn_link(fun() -> registry_loop() end)
+          socket = ListenSocket
         },
         server_loop(Broker)
       end),
@@ -42,8 +44,9 @@ start() ->
 
 server_loop(State) ->
   {ok, ClientSocket} = gen_tcp:accept(State#broker.socket),
-  _ClientPid = spawn_link(fun() ->
+  _ClientPid = spawn(fun() ->
     process_flag(trap_exit, true),
+    inet:setopts(ClientSocket, [{nodelay,true}]),
     Context = #context{
       socket = ClientSocket,
       pid = self()
@@ -60,41 +63,33 @@ clientproxy_loop(State) ->
   NewState = receive
     #mqtt{type = ?CONNECT, arg = O} ->
       ?LOG({client_loop, connect, O}),
-      if
-        O#connect_options.protocol_version /= ?PROTOCOL_VERSION ->
-          send(#mqtt{type = ?CONNACK, arg = 1}, State),
-          exit({connect_refused, wrong_protocol_version});
-        length(O#connect_options.client_id) < 1;
-        length(O#connect_options.client_id) > 23 ->
-          send(#mqtt{type = ?CONNACK, arg = 2}, State),
-          exit({connect_refused, invalid_clientid});
-        true ->
-          (State#client_proxy.broker)#broker.registry_pid ! {mqtt_registry, put, O#connect_options.client_id, self()},
-          send(#mqtt{type = ?CONNACK, arg = 0}, State)
-      end,
+      ok = mqtt_registry:register_client(O#connect_options.client_id, self()),
+      send(#mqtt{type = ?CONNACK, arg = 0}, State),
       State#client_proxy{
         client_id = O#connect_options.client_id,
         ping_timer = timer:apply_interval(O#connect_options.keepalive * 1000, mqtt_core, send_ping, [State#client_proxy.context]),
         id_pid = spawn_link(fun() -> id:start() end),
         inbox_pid = spawn_link(fun() -> store:start() end),
-        outbox_pid = spawn_link(fun() -> store:start() end)
+        outbox_pid = spawn_link(fun() -> store:start() end),
+        will = O#connect_options.will
       };
-    #mqtt{type = ?SUBSCRIBE, arg = Subs} = Message ->
+    #mqtt{type = ?SUBSCRIBE, arg = Subs} ->
       ?LOG({client_loop, subscribe, Subs}),
-      (State#client_proxy.broker)#broker.sub_pid ! {sub, add, State#client_proxy.client_id, self(), Subs},
-      send(#mqtt{type = ?SUBACK, arg = {Message#mqtt.id, Subs}}, State),
+      ok = mqtt_registry:subscribe(State#client_proxy.client_id, Subs),
       State;
-    #mqtt{type = ?UNSUBSCRIBE, arg = {MessageId, Unsubs}} ->
+    #mqtt{type = ?UNSUBSCRIBE, arg = {_, Unsubs}} ->
       ?LOG({client_loop, unsubscribe, Unsubs}),
-      (State#client_proxy.broker)#broker.sub_pid ! {sub, remove, State#client_proxy.client_id, Unsubs},
-      send(#mqtt{type = ?UNSUBACK, arg = MessageId}, State),
+      ok = mqtt_registry:unsubscribe(State#client_proxy.client_id, Unsubs),
       State;
+    #mqtt{type = ?PUBLISH, retain = 1} = Message ->
+      mqtt_registry:retain(Message),
+      ok;
     #mqtt{type = ?PUBLISH, qos = 2} = Message ->
       ok = store:put_message(Message, State#client_proxy.inbox_pid),
       State;
     #mqtt{type = ?PUBLISH} = Message ->
       ?LOG({client_loop, got, mqtt_core:pretty(Message)}),
-      ok = distribute(Message, State),
+      ok = distribute(Message),
       State;
     #mqtt{type = ?PUBACK, arg = MessageId} ->
       store:delete_message(MessageId, State#client_proxy.outbox_pid),
@@ -102,7 +97,7 @@ clientproxy_loop(State) ->
     #mqtt{type = ?PUBREL, arg = MessageId} ->
       Message = store:get_message(MessageId, State#client_proxy.inbox_pid),
       store:delete_message(MessageId, State#client_proxy.inbox_pid),
-      distribute(Message, State),
+      distribute(Message),
       State;
     #mqtt{type = ?PUBCOMP, arg = MessageId} ->
       store:delete_message(MessageId, State#client_proxy.outbox_pid),
@@ -112,9 +107,10 @@ clientproxy_loop(State) ->
       send(Message, State),
       State;
     {'EXIT', FromPid, Reason} ->
-      %% send the will!
-      ?LOG({client_loop, got, exit, FromPid, Reason}),
-      disconnect(State),
+      ?LOG({exti, Reason, from, FromPid}),
+      timer:cancel(State#client_proxy.ping_timer),
+      send_will(State),
+      mqtt_registry:unregister_client(State#client_proxy.client_id, store:get_all_messages(State#client_proxy.outbox_pid)), 
       exit(Reason);
     Message ->
       ?LOG({client_loop, got, Message}),
@@ -122,26 +118,37 @@ clientproxy_loop(State) ->
   end,  
   clientproxy_loop(NewState).
 
-disconnect(State) ->
-  %% remove from registry
-  %% deactivate subscriptions
-  timer:cancel(State#client_proxy.ping_timer).
+send_will(#client_proxy{will = W}) when is_record(W, will) ->
+  ?LOG({send_will, W}),
+  ok = distribute(#mqtt{type = ?PUBLISH, qos = (W#will.publish_options)#publish_options.qos, retain = (W#will.publish_options)#publish_options.retain, arg = {W#will.topic, W#will.message}});
+send_will(_State) ->
+  noop.
 
-distribute(#mqtt{} = Message, State) ->
-  {Topic, _} = Message#mqtt.arg,
-  lists:foreach(fun({_ClientId, ClientPid, SubscribedQoS}) ->
+distribute(#mqtt{arg = {Topic, _}} = Message) ->
+  lists:foreach(fun({ClientId, ClientPid, SubscribedQoS}) ->
     AdjustedMessage = if
       Message#mqtt.qos > SubscribedQoS ->
         Message#mqtt{qos = SubscribedQoS};
       true ->
         Message
     end,
-    ClientPid ! {deliver, AdjustedMessage}
-  end, get_subscribers(Topic, State)),
+    ?LOG({passing, mqtt_core:pretty(AdjustedMessage), to, ClientId, ClientPid}),
+    case ClientPid of
+      not_connected ->
+        if
+          AdjustedMessage#mqtt.qos =:= 0 ->
+            drop_on_the_floor;
+          AdjustedMessage#mqtt.qos > 0 ->
+            ok = gen_server:call({global, mqtt_postroom}, {put_by, AdjustedMessage, for, ClientId}, 1)
+        end;
+      _ ->
+        ClientPid ! {deliver, AdjustedMessage}
+    end
+  end, mqtt_registry:get_subscribers(Topic)),
   ok.
 
 send(#mqtt{} = Message, State) ->
-  ?LOG({broker, send, mqtt_core:pretty(Message)}),
+  ?LOG({send, mqtt_core:pretty(Message)}),
   SendableMessage = if
     Message#mqtt.dup =:= 0, Message#mqtt.qos > 0 ->
       IdMessage = Message#mqtt{id = id:get_incr(State#client_proxy.id_pid)},
@@ -151,79 +158,3 @@ send(#mqtt{} = Message, State) ->
       Message
   end,
   mqtt_core:send(SendableMessage, State#client_proxy.context).
-
-subscriber_loop() ->
-  subscriber_loop(dict:new()).
-subscriber_loop(State) ->
-  NewState = receive
-    {sub, add, ClientId, ClientPid, Subs} ->
-      ?LOG({subscribers, add, ClientId, ClientPid, Subs}),
-      lists:foldl(fun(#sub{topic = Topic, qos = QoS}, InterimState) ->
-        case dict:find(Topic, InterimState) of
-          {ok, Subscribers} ->
-            dict:store(Topic, [{ClientId, ClientPid, QoS}|lists:keydelete(ClientId, 1, Subscribers)], InterimState);
-          error ->
-            dict:store(Topic, [{ClientId, ClientPid, QoS}], InterimState)
-        end
-      end, State, Subs);
-    {sub, remove, ClientId, all} ->
-      ?LOG({subscribers, remove, ClientId, all}),
-      lists:foldl(fun(Topic, InterimState) ->
-        Subscribers = dict:fetch(Topic, InterimState),
-        dict:store(Topic, lists:keydelete(ClientId, 1, Subscribers), InterimState)
-      end, State, dict:fetch_keys(State));
-    {sub, remove, ClientId, Unubs} ->
-      ?LOG({subscribers, remove, ClientId, Unubs}),
-      lists:foldl(fun(#sub{topic = Topic}, InterimState) ->
-        case dict:find(Topic, InterimState) of
-          {ok, Subscribers} ->
-            dict:store(Topic, lists:keydelete(ClientId, 1, Subscribers), InterimState);
-          error ->
-            InterimState
-        end
-      end, State, Unubs);
-    {sub, get, Topic, FromPid} ->
-      case dict:find(Topic, State) of
-        {ok, Subscribers} ->
-          FromPid ! {sub, ok, Subscribers};
-        error ->
-          FromPid ! {sub, ok, []}
-      end,
-      State;
-    Message ->
-      ?LOG({subscribers, got, Message}),
-      State
-  end,
-  ?LOG({newstate, dict:to_list(NewState)}),
-  subscriber_loop(NewState).
-
-get_subscribers(Topic, State) ->
-  (State#client_proxy.broker)#broker.sub_pid ! {sub, get, Topic, self()},
-  receive 
-    {sub, ok, Subscribers} ->
-      ?LOG({get_subscribers, got, Subscribers}),
-      Subscribers;
-    Message ->
-      ?LOG({get_subscribers, got, Message})
-  end.
-
-registry_loop() ->
-  ?LOG({registry, start}),
-  registry_loop(dict:new()).
-registry_loop(State) ->
-  NewState = receive
-    {mqtt_registry, put, ClientId, Pid} ->
-      ?LOG({mqtt_registry, put, ClientId, Pid}),
-      case dict:find(ClientId, State) of
-        {ok, OldPid} ->
-          ?LOG({mqtt_registry, killing_old, OldPid}),
-          exit(OldPid, client_id_represented);
-        error ->
-          ignore
-      end,
-      dict:store(ClientId, Pid, State);
-    Message ->
-      ?LOG({mqtt_registry, unexpected_message, Message}),
-      State
-  end,
-  registry_loop(NewState).

@@ -126,6 +126,8 @@ decode_message(#mqtt{type = ?UNSUBACK} = Message, Rest) ->
   Message#mqtt{
     arg = MessageId
   };
+decode_message(#mqtt{type = ?DISCONNECT} = Message, _Rest) ->
+  Message;
 decode_message(Message, Rest) ->
   exit({decode_message, unexpected_message, {Message, Rest}}).
 
@@ -145,81 +147,98 @@ recv_loop(Context) ->
   ok = process(Message, Context),
   recv_loop(Context).
 
+process(#mqtt{type = ?CONNECT, arg = Arg}, Context)
+    when Arg#connect_options.protocol_version /= ?PROTOCOL_VERSION ->
+  send(#mqtt{type = ?CONNACK, arg = 1}, Context),
+  exit({connect_refused, wrong_protocol_version});
+process(#mqtt{type = ?CONNECT, arg = Arg}, Context)
+    when length(Arg#connect_options.client_id) < 1;
+    length(Arg#connect_options.client_id) > 23 ->
+  send(#mqtt{type = ?CONNACK, arg = 2}, Context),
+  exit({connect_refused, invalid_clientid});
 process(#mqtt{type = ?CONNECT} = Message, Context) ->
-  ?LOG({recv, process, connect}),
-  Context#context.pid ! Message,
+  delegate(Message, Context),
   ok;
-process(#mqtt{type = ?CONNACK} = Message, Context) ->
-  ?LOG({recv, process, connack}),
-  ReturnCode = Message#mqtt.arg,
-  case ReturnCode of
-    0 ->
-      Context#context.pid ! Message;
-    1 ->
-      exit({connect_refused, wrong_protocol_version});
-    2 ->
-      exit({connect_refused, identifier_rejectedn});
-    3 ->
-      exit({connect_refused, broker_unavailable})
-  end,
+process(#mqtt{type = ?CONNACK, arg = 0} = Message, Context) ->
+  delegate(Message, Context),
   ok;
+process(#mqtt{type = ?CONNACK, arg = 1}, _Context) ->
+  exit({connect_refused, wrong_protocol_version});
+process(#mqtt{type = ?CONNACK, arg = 2}, _Context) ->
+  exit({connect_refused, identifier_rejectedn});
+process(#mqtt{type = ?CONNACK, arg = 3}, _Context) ->
+  exit({connect_refused, broker_unavailable});
 process(#mqtt{type = ?PINGRESP}, _Context) ->
-  ?LOG({recv, process, pingresp}),
   ok;
 process(#mqtt{type = ?PINGREQ}, Context) ->
-  ?LOG({recv, process, pingreq}),
   send(#mqtt{type = ?PINGRESP}, Context),
   ok;
 process(#mqtt{type = ?PUBLISH, qos = 0} = Message, Context) ->
-  ?LOG({recv, publish, Message}),
-  Context#context.pid ! Message,
+  delegate(Message, Context),
   ok;
-%% TODO should the next 2 be synchronous deliveries, for correctness?
 process(#mqtt{type = ?PUBLISH, qos = 1} = Message, Context) ->
-  ?LOG({recv, publish, Message}),
-  Context#context.pid ! Message,
-  send(#mqtt{type = ?PUBACK, arg = Message#mqtt.id}, Context),
+  case delegate(Message, Context) of
+    ok ->
+      send(#mqtt{type = ?PUBACK, arg = Message#mqtt.id}, Context);
+    {error, Reason} ->
+      ?LOG({not_acknowledging, pretty(Message), Reason})
+  end,    
   ok;
 process(#mqtt{type = ?PUBLISH, qos = 2} = Message, Context) ->
-  ?LOG({recv, publish, Message}),
-  Context#context.pid ! Message,
-  send(#mqtt{type = ?PUBREC, arg = Message#mqtt.id}, Context),
+  case delegate(Message, Context) of
+    ok ->
+      send(#mqtt{type = ?PUBREC, arg = Message#mqtt.id}, Context);
+    {error, Reason} ->
+      ?LOG({not_acknowledging, pretty(Message), Reason})
+  end,
   ok;
 process(#mqtt{type = ?PUBACK} = Message, Context) ->
-  ?LOG({recv, puback, Message}),
-  Context#context.pid ! Message,
+  delegate(Message, Context),
   ok;
 process(#mqtt{type = ?PUBREC, arg = MessageId} = _Message, Context) ->
-  ?LOG({recv, pubrec, MessageId}),
   send(#mqtt{type = ?PUBREL, arg = MessageId}, Context),
   ok;
 process(#mqtt{type = ?PUBREL, arg = MessageId} = Message, Context) ->
-  ?LOG({recv, pubrel, MessageId}),
-  Context#context.pid ! Message,
-  send(#mqtt{type = ?PUBCOMP, arg = MessageId}, Context),
+  case delegate(Message, Context) of
+    ok ->
+      send(#mqtt{type = ?PUBCOMP, arg = MessageId}, Context);
+    {error, Reason} ->
+      ?LOG({not_acknowleding, pretty(Message), Reason})
+  end,
   ok;
-process(#mqtt{type = ?PUBCOMP, arg = MessageId} = Message, Context) ->
-  ?LOG({recv, pubcomp, MessageId}),
-  Context#context.pid ! Message,
+process(#mqtt{type = ?PUBCOMP, arg = _MessageId} = Message, Context) ->
+  delegate(Message, Context),
   ok;
-process(#mqtt{type = ?SUBSCRIBE} = Message, Context) ->
-  ?LOG({recv, subscribe, Message#mqtt.arg}),
-  Context#context.pid ! Message,
+process(#mqtt{type = ?SUBSCRIBE, arg = Subs} = Message, Context) ->
+  case delegate(Message, Context) of
+    ok ->
+      send(#mqtt{type = ?SUBACK, arg = {Message#mqtt.id, Subs}}, Context);
+    {error, Reason} ->
+      ?LOG({not_acknowledging, pretty(Message), Reason})
+  end,
   ok;
 process(#mqtt{type = ?SUBACK} = Message, Context) ->
-  ?LOG({recv, suback, Message#mqtt.arg}),
-  Context#context.pid ! Message,
+  delegate(Message, Context),
   ok;
 process(#mqtt{type = ?UNSUBSCRIBE} = Message, Context) ->
-  ?LOG({recv, unsubscribe, Message#mqtt.arg}),
-  Context#context.pid ! Message,
+  case delegate(Message, Context) of
+    ok ->
+      send(#mqtt{type = ?SUBACK, arg = {Message#mqtt.id, Subs}}, State);
+    {error, Reason} ->
+      ?LOG({not_acknowledging, pretty(Message), Reason})
+  end,
   ok;
 process(#mqtt{type = ?UNSUBACK} = Message, Context) ->
-  ?LOG({recv, unsuback, Message}),
-  Context#context.pid ! Message,
+  delegate(Message, Context),
   ok;
+process(#mqtt{type = ?DISCONNECT}, _Context) ->
+  exit(client_disconnect);
 process(Message, _Context) ->
-  ?LOG({recv, process, unexpected_message, pretty(Message)}),
+  ?LOG({process, unexpected_message, pretty(Message)}),
+  ok.
+
+delegate(Message, Context) ->
+  Context#context.pid ! Message,
   ok.
 
 send_ping(Context) ->
@@ -357,6 +376,8 @@ decode_strings(<<Length:16/big, _/binary>> = Bytes, Strings) ->
   <<_:16, Binary:Length/binary, Rest/binary>> = Bytes,
   decode_strings(Rest, [binary_to_list(Binary)|Strings]).
 
+recv(0, _Context) ->
+  <<>>;
 recv(Length, Context) ->
   case gen_tcp:recv(Context#context.socket, Length) of
     {ok, Bytes} ->
@@ -368,7 +389,7 @@ recv(Length, Context) ->
   end.
 
 send(#mqtt{} = Message, Context) ->
-  ?LOG({mqtt_core, send, pretty(Message)}),
+%%?LOG({mqtt_core, send, pretty(Message)}),
   {VariableHeader, Payload} = encode_message(Message),
   ok = send(encode_fixed_header(Message), Context),
   ok = send_length(size(VariableHeader) + size(Payload), Context),
