@@ -65,8 +65,12 @@ store_loop(State) ->
       ?LOG({message_store, delete, MessageId}),
       FromPid ! {store, ok},
       dict:erase(MessageId, State);
-    Msg ->
-      ?LOG({message_store, unexpected_message, mqtt_core:pretty(Msg)}),
+    {store, put_by_for, ClientId} ->
+      Pending = lists:fold(fun(_Id, Message, Accum) -> [Message|Accum] end, [], State),
+      ok = gen_server:call({global, mqtt_postroom}, {put_by, Pending, for, ClientId}),
+      State;
+    Message ->
+      ?LOG({message_store, unexpected_message, Message}),
       State
   end,
   store_loop(NewState).
