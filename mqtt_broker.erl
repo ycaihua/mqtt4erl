@@ -41,38 +41,26 @@ server_loop(State) ->
     },
     spawn_link(fun() -> mqtt_core:recv_loop(Context) end),
     mqtt_client:client_loop(#client{
-      context = Context
+      context = Context,
+      owner_pid = spawn_link(?MODULE, owner_loop, [])
     })
   end),
   server_loop(State).
+
+owner_loop() ->
+  receive
+    #mqtt{type = ?PUBLISH} = Message ->
+      distribute(Message);
+    Message ->
+      ?LOG({owner, unexpected_message, Message})
+  end,
+  owner_loop().
 
 %%clientproxy_loop(State) ->
 %%  NewState = receive
 %%    #mqtt{type = ?PUBLISH, retain = 1} = Message ->
 %%      mqtt_registry:retain(Message),
 %%      ok;
-%%    #mqtt{type = ?PUBLISH, qos = 2} = Message ->
-%%      ok = store:put_message(Message, State#client_proxy.inbox_pid),
-%%      State;
-%%    #mqtt{type = ?PUBLISH} = Message ->
-%%      ?LOG({client_loop, got, mqtt_core:pretty(Message)}),
-%%      ok = distribute(Message),
-%%      State;
-%%    #mqtt{type = ?PUBACK, arg = MessageId} ->
-%%      store:delete_message(MessageId, State#client_proxy.outbox_pid),
-%%      State;
-%%    #mqtt{type = ?PUBREL, arg = MessageId} ->
-%%      Message = store:get_message(MessageId, State#client_proxy.inbox_pid),
-%%      store:delete_message(MessageId, State#client_proxy.inbox_pid),
-%%      distribute(Message),
-%%      State;
-%%    #mqtt{type = ?PUBCOMP, arg = MessageId} ->
-%%      store:delete_message(MessageId, State#client_proxy.outbox_pid),
-%%      State;
-%%    {deliver, #mqtt{} = Message} ->
-%%      ?LOG({client_loop, delivering, mqtt_core:pretty(Message)}),
-%%      send(Message, State),
-%%      State;
 %%    {'EXIT', FromPid, Reason} ->
 %%      ?LOG({exti, Reason, from, FromPid}),
 %%      timer:cancel(State#client_proxy.ping_timer),
@@ -92,6 +80,7 @@ server_loop(State) ->
 %%  noop.
 
 distribute(#mqtt{arg = {Topic, _}} = Message) ->
+  ?LOG({distribute, mqtt_core:pretty(Message)}),
   lists:foreach(fun({ClientId, ClientPid, SubscribedQoS}) ->
     AdjustedMessage = if
       Message#mqtt.qos > SubscribedQoS ->
@@ -109,7 +98,7 @@ distribute(#mqtt{arg = {Topic, _}} = Message) ->
             ok = gen_server:call({global, mqtt_postroom}, {put_by, AdjustedMessage, for, ClientId}, 1)
         end;
       _ ->
-        ClientPid ! {deliver, AdjustedMessage}
+        ClientPid ! {'_deliver', AdjustedMessage}
     end
   end, mqtt_registry:get_subscribers(Topic)),
   ok.

@@ -67,7 +67,7 @@ disconnect(Pid) ->
 
 get_message() ->
   receive
-    {?MODULE, received, _, _} = Message ->
+    #mqtt{type = ?PUBLISH} = Message ->
       Message
   end.
 
@@ -152,34 +152,46 @@ client_loop(State) ->
       State#client.owner_pid ! {?MODULE, subscription, updated, PendingUnsubs},
       store:delete_message(MessageId, State#client.outbox_pid),
       State;
-    #mqtt{type = ?PUBLISH, qos = 2, arg = {Topic, Payload}} = Message ->
-      ?LOG({client, received, qos, 2, Topic, Payload}),
-      store:put_message(Message, State#client.inbox_pid),
-      State;
-    #mqtt{type = ?PUBLISH, arg = {Topic, Payload}} ->
-      ?LOG({client, received, qos_less_than, 2, Topic, Payload}),
-      State#client.owner_pid ! {?MODULE, received, Topic, Payload},
-      State;
+    #mqtt{type = ?PUBLISH, qos = 0} = Message ->
+      State#client.owner_pid ! Message,
+      State;      
+    #mqtt{type = ?PUBLISH, qos = 1} = Message ->
+      State#client.owner_pid ! Message,
+      send(#mqtt{type = ?PUBACK, arg = Message#mqtt.id}, State),
+      State;   
     #mqtt{type = ?PUBACK, arg = MessageId} ->
       store:delete_message(MessageId, State#client.outbox_pid),
       State;
+    #mqtt{type = ?PUBLISH, qos = 2} = Message ->
+      ?LOG({client, holding, qos, 2, mqtt_core:pretty(Message)}),
+      store:put_message(Message, State#client.inbox_pid),
+      send(#mqtt{type = ?PUBREC, arg = Message#mqtt.id}, State),
+      State;
+    #mqtt{type = ?PUBREC, arg = MessageId} ->
+      send(#mqtt{type = ?PUBREL, arg = MessageId}, State),
+      State;
     #mqtt{type = ?PUBREL, arg = MessageId} ->
-      #mqtt{type = ?PUBLISH, arg = {Topic, Payload}} = store:get_message(MessageId, State#client.inbox_pid),
-      State#client.owner_pid ! {?MODULE, received, Topic, Payload},
+      Message = store:get_message(MessageId, State#client.inbox_pid),
+      State#client.owner_pid ! Message,
       store:delete_message(MessageId, State#client.inbox_pid),
+      send(#mqtt{type = ?PUBCOMP, arg = MessageId}, State),
       State;
     #mqtt{type = ?PUBCOMP, arg = MessageId} ->
       store:delete_message(MessageId, State#client.outbox_pid),
       State;
     #mqtt{type = ?DISCONNECT} ->
+      ?LOG(client_disconnect),
       exit(client_disconnect);
+    {'_deliver', #mqtt{} = Message} ->
+      send(Message, State),
+      State;
     {'EXIT', FromPid, Reason} ->
       ?LOG({got, exit, FromPid, Reason}),
       stop_client(State),
       State#client.owner_pid ! {?MODULE, disconnected},
       exit(Reason);
     Message ->
-      ?LOG({?MODULE, unexpected_message, mqtt_core:pretty(Message)}),
+      ?LOG({?MODULE, unexpected_message, Message}),
       State
   end,
   client_loop(NewState).

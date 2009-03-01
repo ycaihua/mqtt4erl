@@ -9,7 +9,7 @@
 
 -compile(export_all).
 
--export([set_connect_options/1, set_publish_options/1, decode_message/2, recv_loop/1, send_ping/1, encode_message/1, send/2]).
+-export([set_connect_options/1, set_publish_options/1, decode_message/2, recv_loop/1, encode_message/1, send/2]).
 
 set_connect_options(Options) ->
   set_connect_options(Options, #connect_options{}).
@@ -144,54 +144,8 @@ recv_loop(Context) ->
   Rest = recv(RemainingLength, Context),
   Message = decode_message(decode_fixed_header(FixedHeader), Rest),
   ?LOG({recv, pretty(Message)}),
-  delegate(Message, Context),
-  recv_loop(Context).
-
-%%process(#mqtt{type = ?PUBLISH, qos = 0} = Message, Context) ->
-%%  delegate(Message, Context),
-%%  ok;
-%%process(#mqtt{type = ?PUBLISH, qos = 1} = Message, Context) ->
-%%  case delegate(Message, Context) of
-%%    ok ->
-%%      send(#mqtt{type = ?PUBACK, arg = Message#mqtt.id}, Context);
-%%    {error, Reason} ->
-%%      ?LOG({not_acknowledging, pretty(Message), Reason})
-%%  end,    
-%%  ok;
-%%process(#mqtt{type = ?PUBLISH, qos = 2} = Message, Context) ->
-%%  case delegate(Message, Context) of
-%%    ok ->
-%%      send(#mqtt{type = ?PUBREC, arg = Message#mqtt.id}, Context);
-%%    {error, Reason} ->
-%%      ?LOG({not_acknowledging, pretty(Message), Reason})
-%%  end,
-%%  ok;
-%%process(#mqtt{type = ?PUBACK} = Message, Context) ->
-%%  delegate(Message, Context),
-%%  ok;
-%%process(#mqtt{type = ?PUBREC, arg = MessageId} = _Message, Context) ->
-%%  send(#mqtt{type = ?PUBREL, arg = MessageId}, Context),
-%%  ok;
-%%process(#mqtt{type = ?PUBREL, arg = MessageId} = Message, Context) ->
-%%  case delegate(Message, Context) of
-%%    ok ->
-%%      send(#mqtt{type = ?PUBCOMP, arg = MessageId}, Context);
-%%    {error, Reason} ->
-%%      ?LOG({not_acknowleding, pretty(Message), Reason})
-%%  end,
-%%  ok;
-%%process(#mqtt{type = ?PUBCOMP, arg = _MessageId} = Message, Context) ->
-%%  delegate(Message, Context),
-%%  ok;
-process(#mqtt{type = ?DISCONNECT}, _Context) ->
-  exit(client_disconnect);
-process(Message, _Context) ->
-  ?LOG({process, unexpected_message, pretty(Message)}),
-  ok.
-
-delegate(Message, Context) ->
   Context#context.pid ! Message,
-  ok.
+  recv_loop(Context).
 
 encode_message(#mqtt{type = ?CONNACK, arg = ReturnCode}) ->
   {<<?UNUSED:8, ReturnCode:8/big>>,<<>>};
