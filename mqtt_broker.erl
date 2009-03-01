@@ -42,15 +42,21 @@ server_loop(State) ->
     spawn_link(fun() -> mqtt_core:recv_loop(Context) end),
     mqtt_client:client_loop(#client{
       context = Context,
-      owner_pid = spawn_link(?MODULE, owner_loop, [])
+      owner_pid = spawn(?MODULE, owner_loop, [])
     })
   end),
   server_loop(State).
 
 owner_loop() ->
   receive
+    {mqtt_client, connect, ClientId, Pid} ->
+      ?LOG({connect, from, ClientId, at, Pid});
     #mqtt{type = ?PUBLISH} = Message ->
       distribute(Message);
+    {mqtt_client, disconnected, ClientId} ->
+      ?LOG({disconnect, from, ClientId}),
+      mqtt_registry:unregister_client(ClientId),
+      exit(normal);
     Message ->
       ?LOG({owner, unexpected_message, Message})
   end,

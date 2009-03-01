@@ -16,7 +16,8 @@ connect(Host, Port, Options) ->
   OwnerPid = self(),
   Pid = case gen_tcp:connect(Host, Port, [binary, {active, false}, {packet, raw}, {nodelay, true}]) of
     {ok, Socket} ->
-      spawn_link(fun() ->
+      spawn(fun() ->
+        ?LOG({client, self()}),
         process_flag(trap_exit, true),
         Context = #context{
           pid = self(),
@@ -35,7 +36,7 @@ connect(Host, Port, Options) ->
       exit({connect, socket, fail, Reason})
   end,
   receive
-    {?MODULE, connected} ->
+    {?MODULE, connected, _ClientId, _Pid} ->
       {ok, Pid}
     after
       O#connect_options.connect_timeout * 1000 ->
@@ -63,7 +64,10 @@ unsubscribe(Pid, Topic) ->
 
 disconnect(Pid) ->
   Pid ! {?MODULE, disconnect},
-  ok.
+  receive
+    {?MODULE, disconnected, _ClientId} ->
+      ok
+  end.
 
 get_message() ->
   receive
@@ -101,28 +105,35 @@ client_loop(State) ->
       State;
     {?MODULE, disconnect} ->
       ok = send(#mqtt{type = ?DISCONNECT}, State),
-      exit(disconnect);
+      exit(self(), disconnect),
+      State;
     #mqtt{type = ?CONNACK, arg = 0} ->
-      State#client.owner_pid ! {?MODULE, connected},
+      State#client.owner_pid ! {?MODULE, connected, (State#client.connect_options)#connect_options.client_id, self()},
       start_client(State);
     #mqtt{type = ?CONNACK, arg = 1} ->
-      exit({connect_refused, wrong_protocol_version});
+      exit(self(), {connect_refused, wrong_protocol_version}),
+      State;
     #mqtt{type = ?CONNACK, arg = 2} ->
-      exit({connect_refused, identifier_rejectedn});
+      exit(self(), {connect_refused, identifier_rejectedn}),
+      State;
     #mqtt{type = ?CONNACK, arg = 3} ->
-      exit({connect_refused, broker_unavailable});
+      exit(self(), {connect_refused, broker_unavailable}),
+      State;
     #mqtt{type = ?CONNECT, arg = Arg} 
         when Arg#connect_options.protocol_version /= ?PROTOCOL_VERSION ->
       send(#mqtt{type = ?CONNACK, arg = 1}, State),
-      exit({connect_refused, wrong_protocol_version});
+      exit(self(), {connect_refused, wrong_protocol_version}),
+      State;
     #mqtt{type = ?CONNECT, arg = Arg}
         when length(Arg#connect_options.client_id) < 1;
         length(Arg#connect_options.client_id) > 23 ->
       send(#mqtt{type = ?CONNACK, arg = 2}, State),
-      exit({connect_refused, invalid_clientid});
+      exit(self(), {connect_refused, invalid_clientid}),
+      State;
     #mqtt{type = ?CONNECT, arg = Arg} ->
       ?LOG({connect, Arg}),
-      ok = mqtt_registry:register_client(Arg#connect_options.client_id, self()),
+      State#client.owner_pid ! {?MODULE, connect, Arg#connect_options.client_id, self()},
+      mqtt_registry:register_client(Arg#connect_options.client_id, self()),
       send(#mqtt{type = ?CONNACK, arg = 0}, State),
       start_client(State#client{connect_options = Arg});
     #mqtt{type = ?PINGRESP} ->
@@ -180,15 +191,15 @@ client_loop(State) ->
       store:delete_message(MessageId, State#client.outbox_pid),
       State;
     #mqtt{type = ?DISCONNECT} ->
-      ?LOG(client_disconnect),
-      exit(client_disconnect);
+      exit(self(), client_disconnect),
+      State;
     {'_deliver', #mqtt{} = Message} ->
       send(Message, State),
       State;
     {'EXIT', FromPid, Reason} ->
-      ?LOG({got, exit, FromPid, Reason}),
+      ?LOG({trap_exit, FromPid, Reason}),
       stop_client(State),
-      State#client.owner_pid ! {?MODULE, disconnected},
+      State#client.owner_pid ! {?MODULE, disconnected, (State#client.connect_options)#connect_options.client_id},
       exit(Reason);
     Message ->
       ?LOG({?MODULE, unexpected_message, Message}),
