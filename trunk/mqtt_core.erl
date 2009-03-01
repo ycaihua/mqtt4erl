@@ -144,93 +144,45 @@ recv_loop(Context) ->
   Rest = recv(RemainingLength, Context),
   Message = decode_message(decode_fixed_header(FixedHeader), Rest),
   ?LOG({recv, pretty(Message)}),
-  ok = process(Message, Context),
+  delegate(Message, Context),
   recv_loop(Context).
 
-process(#mqtt{type = ?CONNECT, arg = Arg}, Context)
-    when Arg#connect_options.protocol_version /= ?PROTOCOL_VERSION ->
-  send(#mqtt{type = ?CONNACK, arg = 1}, Context),
-  exit({connect_refused, wrong_protocol_version});
-process(#mqtt{type = ?CONNECT, arg = Arg}, Context)
-    when length(Arg#connect_options.client_id) < 1;
-    length(Arg#connect_options.client_id) > 23 ->
-  send(#mqtt{type = ?CONNACK, arg = 2}, Context),
-  exit({connect_refused, invalid_clientid});
-process(#mqtt{type = ?CONNECT} = Message, Context) ->
-  delegate(Message, Context),
-  ok;
-process(#mqtt{type = ?CONNACK, arg = 0} = Message, Context) ->
-  delegate(Message, Context),
-  ok;
-process(#mqtt{type = ?CONNACK, arg = 1}, _Context) ->
-  exit({connect_refused, wrong_protocol_version});
-process(#mqtt{type = ?CONNACK, arg = 2}, _Context) ->
-  exit({connect_refused, identifier_rejectedn});
-process(#mqtt{type = ?CONNACK, arg = 3}, _Context) ->
-  exit({connect_refused, broker_unavailable});
-process(#mqtt{type = ?PINGRESP}, _Context) ->
-  ok;
-process(#mqtt{type = ?PINGREQ}, Context) ->
-  send(#mqtt{type = ?PINGRESP}, Context),
-  ok;
-process(#mqtt{type = ?PUBLISH, qos = 0} = Message, Context) ->
-  delegate(Message, Context),
-  ok;
-process(#mqtt{type = ?PUBLISH, qos = 1} = Message, Context) ->
-  case delegate(Message, Context) of
-    ok ->
-      send(#mqtt{type = ?PUBACK, arg = Message#mqtt.id}, Context);
-    {error, Reason} ->
-      ?LOG({not_acknowledging, pretty(Message), Reason})
-  end,    
-  ok;
-process(#mqtt{type = ?PUBLISH, qos = 2} = Message, Context) ->
-  case delegate(Message, Context) of
-    ok ->
-      send(#mqtt{type = ?PUBREC, arg = Message#mqtt.id}, Context);
-    {error, Reason} ->
-      ?LOG({not_acknowledging, pretty(Message), Reason})
-  end,
-  ok;
-process(#mqtt{type = ?PUBACK} = Message, Context) ->
-  delegate(Message, Context),
-  ok;
-process(#mqtt{type = ?PUBREC, arg = MessageId} = _Message, Context) ->
-  send(#mqtt{type = ?PUBREL, arg = MessageId}, Context),
-  ok;
-process(#mqtt{type = ?PUBREL, arg = MessageId} = Message, Context) ->
-  case delegate(Message, Context) of
-    ok ->
-      send(#mqtt{type = ?PUBCOMP, arg = MessageId}, Context);
-    {error, Reason} ->
-      ?LOG({not_acknowleding, pretty(Message), Reason})
-  end,
-  ok;
-process(#mqtt{type = ?PUBCOMP, arg = _MessageId} = Message, Context) ->
-  delegate(Message, Context),
-  ok;
-process(#mqtt{type = ?SUBSCRIBE, arg = Subs} = Message, Context) ->
-  case delegate(Message, Context) of
-    ok ->
-      send(#mqtt{type = ?SUBACK, arg = {Message#mqtt.id, Subs}}, Context);
-    {error, Reason} ->
-      ?LOG({not_acknowledging, pretty(Message), Reason})
-  end,
-  ok;
-process(#mqtt{type = ?SUBACK} = Message, Context) ->
-  delegate(Message, Context),
-  ok;
-process(#mqtt{type = ?UNSUBSCRIBE} = Message, Context) ->
-  case delegate(Message, Context) of
-    ok ->
-      send(#mqtt{type = ?SUBACK, arg = {Message#mqtt.id, Subs}}, State);
-    {error, Reason} ->
-      ?LOG({not_acknowledging, pretty(Message), Reason})
-  end,
-  ok;
-process(#mqtt{type = ?UNSUBACK} = Message, Context) ->
-  delegate(Message, Context),
-  ok;
+%%process(#mqtt{type = ?PUBLISH, qos = 0} = Message, Context) ->
+%%  delegate(Message, Context),
+%%  ok;
+%%process(#mqtt{type = ?PUBLISH, qos = 1} = Message, Context) ->
+%%  case delegate(Message, Context) of
+%%    ok ->
+%%      send(#mqtt{type = ?PUBACK, arg = Message#mqtt.id}, Context);
+%%    {error, Reason} ->
+%%      ?LOG({not_acknowledging, pretty(Message), Reason})
+%%  end,    
+%%  ok;
+%%process(#mqtt{type = ?PUBLISH, qos = 2} = Message, Context) ->
+%%  case delegate(Message, Context) of
+%%    ok ->
+%%      send(#mqtt{type = ?PUBREC, arg = Message#mqtt.id}, Context);
+%%    {error, Reason} ->
+%%      ?LOG({not_acknowledging, pretty(Message), Reason})
+%%  end,
+%%  ok;
+%%process(#mqtt{type = ?PUBACK} = Message, Context) ->
+%%  delegate(Message, Context),
+%%  ok;
+%%process(#mqtt{type = ?PUBREC, arg = MessageId} = _Message, Context) ->
+%%  send(#mqtt{type = ?PUBREL, arg = MessageId}, Context),
+%%  ok;
+%%process(#mqtt{type = ?PUBREL, arg = MessageId} = Message, Context) ->
+%%  case delegate(Message, Context) of
+%%    ok ->
+%%      send(#mqtt{type = ?PUBCOMP, arg = MessageId}, Context);
+%%    {error, Reason} ->
+%%      ?LOG({not_acknowleding, pretty(Message), Reason})
+%%  end,
+%%  ok;
+%%process(#mqtt{type = ?PUBCOMP, arg = _MessageId} = Message, Context) ->
+%%  delegate(Message, Context),
+%%  ok;
 process(#mqtt{type = ?DISCONNECT}, _Context) ->
   exit(client_disconnect);
 process(Message, _Context) ->
@@ -240,10 +192,6 @@ process(Message, _Context) ->
 delegate(Message, Context) ->
   Context#context.pid ! Message,
   ok.
-
-send_ping(Context) ->
-  ?LOG({send, ping}),
-  send(#mqtt{type = ?PINGREQ}, Context).
 
 encode_message(#mqtt{type = ?CONNACK, arg = ReturnCode}) ->
   {<<?UNUSED:8, ReturnCode:8/big>>,<<>>};

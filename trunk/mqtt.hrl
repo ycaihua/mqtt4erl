@@ -35,6 +35,17 @@
   socket
 }).
 
+-record(client, {
+  context,
+  connect_options,
+  id_pid,
+  owner_pid,
+  inbox_pid,
+  outbox_pid,
+  ping_timer,
+  retry_timer
+}).
+
 -record(connect_options, {
   protocol_name = ?PROTOCOL_NAME,
   protocol_version = ?PROTOCOL_VERSION,
