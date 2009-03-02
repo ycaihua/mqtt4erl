@@ -7,7 +7,7 @@
 
 -include_lib("mqtt.hrl").
 
--export([connect/1, connect/3, publish/3, subscribe/2, unsubscribe/2, disconnect/1, get_message/0, default_client_id/0, client_loop/1, send_ping/1, resend_unack/1]).
+-export([connect/1, connect/3, publish/3, subscribe/2, unsubscribe/2, disconnect/1, get_message/0, default_client_id/0, client_loop/1, send_ping/1, resend_unack/1, deliver/2]).
 
 connect(Host) ->
   connect(Host, ?MQTT_PORT, []).
@@ -274,3 +274,6 @@ send(#mqtt{} = Message, State) ->
       Message
   end,
   mqtt_core:send(SendableMessage, State#client.context).
+
+deliver(Pid, Message) ->
+  Pid ! {'_deliver', Message}.

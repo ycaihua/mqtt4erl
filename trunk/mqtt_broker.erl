@@ -9,7 +9,7 @@
 
 -compile(export_all).
 
--export([start/0]).
+-export([start/0, distribute/1, distribute/2]).
 
 -record(broker, {
   socket
@@ -58,8 +58,14 @@ owner_loop(State) ->
     {mqtt_client, connect, ClientId, Pid, Will} ->
       ?LOG({connect, from, ClientId, at, Pid}),
       State#owner{will = Will};
-    #mqtt{type = ?PUBLISH} = Message ->
+    #mqtt{type = ?PUBLISH, retain = Retain} = Message ->
       distribute(Message),
+      case Retain =:= 1 of
+        true ->
+          mqtt_registry:retain(Message);
+        _ ->
+          noop
+      end,
       State;
     {mqtt_client, disconnected, ClientId} ->
       ?LOG({disconnect, from, ClientId, will, State#owner.will}),
@@ -87,7 +93,9 @@ owner_loop(State) ->
 %%  clientproxy_loop(NewState).
 
 distribute(#mqtt{arg = {Topic, _}} = Message) ->
-  ?LOG({distribute, mqtt_core:pretty(Message)}),
+  distribute(Message, mqtt_registry:get_subscribers(Topic)).
+distribute(#mqtt{} = Message, Subscribers) ->
+  ?LOG({distribute, mqtt_core:pretty(Message), to, Subscribers}),
   lists:foreach(fun({ClientId, ClientPid, SubscribedQoS}) ->
     AdjustedMessage = if
       Message#mqtt.qos > SubscribedQoS ->
@@ -102,10 +110,11 @@ distribute(#mqtt{arg = {Topic, _}} = Message) ->
           AdjustedMessage#mqtt.qos =:= 0 ->
             drop_on_the_floor;
           AdjustedMessage#mqtt.qos > 0 ->
-            ok = gen_server:call({global, mqtt_postroom}, {put_by, AdjustedMessage, for, ClientId}, 1)
+%%          TODO
+            noop
         end;
       _ ->
-        ClientPid ! {'_deliver', AdjustedMessage}
+        mqtt_client:deliver(ClientPid, AdjustedMessage)
     end
-  end, mqtt_registry:get_subscribers(Topic)),
+  end, Subscribers),
   ok.
