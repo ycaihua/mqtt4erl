@@ -65,7 +65,7 @@ unsubscribe(Pid, Topic) ->
 disconnect(Pid) ->
   Pid ! {?MODULE, disconnect},
   receive
-    {?MODULE, disconnected, _ClientId} ->
+    {?MODULE, disconnected, _ClientId, _Will} ->
       ok
   end.
 
@@ -132,7 +132,7 @@ client_loop(State) ->
       State;
     #mqtt{type = ?CONNECT, arg = Arg} ->
       ?LOG({connect, Arg}),
-      State#client.owner_pid ! {?MODULE, connect, Arg#connect_options.client_id, self()},
+      State#client.owner_pid ! {?MODULE, connect, Arg#connect_options.client_id, self(), will_message(Arg)},
       mqtt_registry:register_client(Arg#connect_options.client_id, self()),
       send(#mqtt{type = ?CONNACK, arg = 0}, State),
       start_client(State#client{connect_options = Arg});
@@ -249,6 +249,19 @@ resend_unack(State) ->
     ?LOG({resend, mqtt_core:pretty(Message)}),
     send(Message#mqtt{dup = 1}, State) 
   end, store:get_all_messages(State#client.outbox_pid)).
+
+will_message(O) ->
+  case O#connect_options.will of
+    #will{} = W ->
+      #mqtt{
+        type = ?PUBLISH,
+        qos = (W#will.publish_options)#publish_options.qos,
+        retain = (W#will.publish_options)#publish_options.retain,
+        arg = {W#will.topic, W#will.message}
+      };
+    undefined ->
+      undefined
+  end.
 
 send(#mqtt{} = Message, State) ->
   ?LOG({client, send, mqtt_core:pretty(Message)}),
