@@ -15,6 +15,10 @@
   socket
 }).
 
+-record(owner, {
+  will
+}).
+
 start() ->
   case gen_tcp:listen(?MQTT_PORT, [binary, {active, false}, {packet, raw}, {nodelay, true}]) of
     {ok, ListenSocket} ->
@@ -48,42 +52,39 @@ server_loop(State) ->
   server_loop(State).
 
 owner_loop() ->
-  receive
-    {mqtt_client, connect, ClientId, Pid} ->
-      ?LOG({connect, from, ClientId, at, Pid});
+  owner_loop(#owner{}).
+owner_loop(State) ->
+  NewState = receive
+    {mqtt_client, connect, ClientId, Pid, Will} ->
+      ?LOG({connect, from, ClientId, at, Pid}),
+      State#owner{will = Will};
     #mqtt{type = ?PUBLISH} = Message ->
-      distribute(Message);
+      distribute(Message),
+      State;
     {mqtt_client, disconnected, ClientId} ->
-      ?LOG({disconnect, from, ClientId}),
+      ?LOG({disconnect, from, ClientId, will, State#owner.will}),
+      case State#owner.will of
+        #mqtt{} = Will ->
+          distribute(Will);
+        _ ->
+          noop
+      end,
       mqtt_registry:unregister_client(ClientId),
-      exit(normal);
+      exit(normal),
+      State;
     Message ->
-      ?LOG({owner, unexpected_message, Message})
+      ?LOG({owner, unexpected_message, Message}),
+      State
   end,
-  owner_loop().
+  owner_loop(NewState).
 
 %%clientproxy_loop(State) ->
 %%  NewState = receive
 %%    #mqtt{type = ?PUBLISH, retain = 1} = Message ->
 %%      mqtt_registry:retain(Message),
 %%      ok;
-%%    {'EXIT', FromPid, Reason} ->
-%%      ?LOG({exti, Reason, from, FromPid}),
-%%      timer:cancel(State#client_proxy.ping_timer),
-%%      send_will(State),
-%%      mqtt_registry:unregister_client(State#client_proxy.client_id, store:get_all_messages(State#client_proxy.outbox_pid)), 
-%%      exit(Reason);
-%%    Message ->
-%%      ?LOG({client_loop, got, Message}),
-%%      State
 %%  end,  
 %%  clientproxy_loop(NewState).
-
-%%send_will(#client{will = W}) when is_record(W, will) ->
-%%  ?LOG({send_will, W}),
-%%  ok = distribute(#mqtt{type = ?PUBLISH, qos = (W#will.publish_options)#publish_options.qos, retain = (W#will.publish_options)#publish_options.retain, arg = {W#will.topic, W#will.message}});
-%%send_will(_State) ->
-%%  noop.
 
 distribute(#mqtt{arg = {Topic, _}} = Message) ->
   ?LOG({distribute, mqtt_core:pretty(Message)}),
