@@ -7,7 +7,7 @@
 
 -include_lib("mqtt.hrl").
 
--export([connect/1, connect/3, publish/3, subscribe/2, unsubscribe/2, disconnect/1, get_message/0, default_client_id/0, client_loop/1, send_ping/1, resend_unack/1, deliver/2]).
+-export([connect/1, connect/3, publish/3, subscribe/2, unsubscribe/2, disconnect/1, get_message/0, default_client_id/0, client_loop/1, send_ping/1, resend_unack/1, deliver/2, store_pid/2]).
 
 connect(Host) ->
   connect(Host, ?MQTT_PORT, []).
@@ -212,8 +212,8 @@ start_client(State) ->
   RetryInterval = (State#client.connect_options)#connect_options.retry,
   InitialState = State#client{
     id_pid = spawn_link(fun() -> id:start() end),
-    inbox_pid = spawn_link(fun() -> store:start() end),
-    outbox_pid = spawn_link(fun() -> store:start() end)
+    inbox_pid = store_pid((State#client.connect_options)#connect_options.client_id, inbox),
+    outbox_pid = store_pid((State#client.connect_options)#connect_options.client_id, outbox)
   },
   InitialState#client{
     ping_timer = timer:apply_interval(PingInterval * 1000, ?MODULE, send_ping, [InitialState]),
@@ -277,3 +277,11 @@ send(#mqtt{} = Message, State) ->
 
 deliver(Pid, Message) ->
   Pid ! {'_deliver', Message}.
+
+store_pid(ClientId, StoreId) ->
+  case global:whereis_name({ClientId, StoreId}) of
+    undefined ->
+      store:start_link(ClientId, StoreId);
+    Pid ->
+      Pid
+  end.

@@ -56,6 +56,9 @@ owner_loop(State) ->
   NewState = receive
     {mqtt_client, connect, ClientId, Pid, Will} ->
       ?LOG({connect, from, ClientId, at, Pid}),
+      StorePid = mqtt_client:store_pid(ClientId, pending),
+      store:pass_messages(Pid, StorePid),
+      exit(StorePid, normal),
       State#owner{will = Will};
     #mqtt{type = ?PUBLISH, retain = Retain} = Message ->
       distribute(Message),
@@ -105,8 +108,9 @@ route(#mqtt{} = Message, {ClientId, ClientPid, SubscribedQoS}) ->
         DampedMessage#mqtt.qos =:= 0 ->
           drop_on_the_floor;
         DampedMessage#mqtt.qos > 0 ->
-%% TODO
-          noop
+          StorePid = mqtt_client:store_pid(ClientId, pending),
+          mqtt_store:put_message(StorePid, Message),
+          exit(StorePid, normal)
       end;
     _ ->
       mqtt_client:deliver(ClientPid, DampedMessage)
