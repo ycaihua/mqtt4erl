@@ -36,7 +36,7 @@ handle_call({unregister, ClientId}, _From, State) ->
 handle_call({subscribe, ClientId, Subs}, _From, State) ->
   ?LOG({subscribe, ClientId, Subs}),
   NewSubscriptions = lists:foldl(fun(#sub{topic = Topic, qos = QoS}, InterimState) ->
-    gen_server:cast(self(), {deliver_retained, Topic}),
+    gen_server:cast(self(), {deliver_retained, Topic, ClientId}),
     case dict:find(Topic, InterimState) of
       {ok, Subscribers} ->
         dict:store(Topic, [{ClientId, QoS}|lists:keydelete(ClientId, 1, Subscribers)], InterimState);
@@ -60,27 +60,29 @@ handle_call({get_subscribers, Topic}, _From, State) ->
       {reply, lookup_subscribers(Topic, State), State};
 handle_call({retain, #mqtt{arg = {Topic, _}} = Message}, _From, State) ->
   ?LOG({retaining, mqtt_core:pretty(Message), for, Topic}),
-  {reply, ok, State#mqtt_registry{retainedMessages = dict:append(Topic, Message, State#mqtt_registry.retainedMessages)}};
+  {reply, ok, State#mqtt_registry{retainedMessages = dict:store(Topic, Message, State#mqtt_registry.retainedMessages)}};
 handle_call(Message, _From, State) ->
   ?LOG({unexpected_message, Message}),
   {reply, ok, State}.
 
-
-
-handle_cast({deliver_retained, Topic}, State) ->
-  ?LOG({deliver_retained, Topic}),
+handle_cast({deliver_retained, Topic, ClientId}, State) ->
+  ?LOG({deliver_retained, Topic, to, ClientId}),
+  Client = case dict:find(Topic , State#mqtt_registry.subscriptions) of
+    {ok, Subscribers} ->
+      {_, SubscribedQoS} = lists:keysearch(ClientId, 1, Subscribers),
+      {ClientId, lookup_pid(ClientId, State), SubscribedQoS};
+    error ->
+      exit({deliver_retained, topic, Topic, not_subscriber, ClientId})
+  end,
   case dict:find(Topic, State#mqtt_registry.retainedMessages) of
-    {ok, RetainedMessages} ->
-      Subscribers = lookup_subscribers(Topic, State),
-      ?LOG({delivering, RetainedMessages, to, Subscribers}),
-      lists:foreach(fun(M) ->
-        mqtt_broker:distribute(M, Subscribers)
-      end, RetainedMessages);
+    {ok, RetainedMessage} ->
+      mqtt_broker:route(RetainedMessage, Client);
     error ->
       noop
   end,
   {noreply, State};
 handle_cast(_Msg, State) -> {noreply, State}.
+
 handle_info(_Msg, State) -> {noreply, State}.
 terminate(_Reason, _State) -> ok.
 code_change(_OldVersion, State, _Extra) -> {ok, State}.
@@ -89,15 +91,18 @@ lookup_subscribers(Topic, State) ->
   case dict:find(Topic, State#mqtt_registry.subscriptions) of
     {ok, Subscribers} ->
       lists:map(fun({ClientId, QoS}) ->
-        case dict:find(ClientId, State#mqtt_registry.registry) of
-          {ok, Pid} ->
-            {ClientId, Pid, QoS};
-          error ->
-            {ClientId, not_connected, QoS}
-        end
+        {ClientId, lookup_pid(ClientId, State), QoS}
       end, Subscribers);
     error ->
       []
+  end.
+
+lookup_pid(ClientId, State) ->
+  case dict:find(ClientId, State#mqtt_registry.registry) of
+    {ok, Pid} ->
+      Pid;
+    error ->
+      not_connected
   end.
 
 subscribe(ClientId, Subs) ->
