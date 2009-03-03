@@ -1,7 +1,6 @@
 -module(mqtt_broker).
 
 %% TODO
-%% - send retained messages on subscribe
 %% - clean up topics with no subscribers
 %% - support clean starts
 
@@ -9,7 +8,7 @@
 
 -compile(export_all).
 
--export([start/0, distribute/1, distribute/2]).
+-export([start/0, distribute/1, route/2]).
 
 -record(broker, {
   socket
@@ -84,37 +83,31 @@ owner_loop(State) ->
   end,
   owner_loop(NewState).
 
-%%clientproxy_loop(State) ->
-%%  NewState = receive
-%%    #mqtt{type = ?PUBLISH, retain = 1} = Message ->
-%%      mqtt_registry:retain(Message),
-%%      ok;
-%%  end,  
-%%  clientproxy_loop(NewState).
-
 distribute(#mqtt{arg = {Topic, _}} = Message) ->
-  distribute(Message, mqtt_registry:get_subscribers(Topic)).
-distribute(#mqtt{} = Message, Subscribers) ->
+  Subscribers = mqtt_registry:get_subscribers(Topic),
   ?LOG({distribute, mqtt_core:pretty(Message), to, Subscribers}),
-  lists:foreach(fun({ClientId, ClientPid, SubscribedQoS}) ->
-    AdjustedMessage = if
-      Message#mqtt.qos > SubscribedQoS ->
-        Message#mqtt{qos = SubscribedQoS};
-      true ->
-        Message
-    end,
-    ?LOG({passing, mqtt_core:pretty(AdjustedMessage), to, ClientId, ClientPid}),
-    case ClientPid of
-      not_connected ->
-        if
-          AdjustedMessage#mqtt.qos =:= 0 ->
-            drop_on_the_floor;
-          AdjustedMessage#mqtt.qos > 0 ->
-%%          TODO
-            noop
-        end;
-      _ ->
-        mqtt_client:deliver(ClientPid, AdjustedMessage)
-    end
+  lists:foreach(fun(Client) ->
+    route(Message, Client)
   end, Subscribers),
   ok.
+
+route(#mqtt{} = Message, {ClientId, ClientPid, SubscribedQoS}) ->
+  DampedMessage = if
+    Message#mqtt.qos > SubscribedQoS ->
+      Message#mqtt{qos = SubscribedQoS};
+    true ->
+      Message
+  end,
+  ?LOG({passing, mqtt_core:pretty(DampedMessage), to, ClientId, ClientPid}),
+  case ClientPid of
+    not_connected ->
+      if
+        DampedMessage#mqtt.qos =:= 0 ->
+          drop_on_the_floor;
+        DampedMessage#mqtt.qos > 0 ->
+%% TODO
+          noop
+      end;
+    _ ->
+      mqtt_client:deliver(ClientPid, DampedMessage)
+  end.
