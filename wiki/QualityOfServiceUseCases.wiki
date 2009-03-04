@@ -7,14 +7,19 @@ Some use cases to understand how quality of service levels should affect behavio
 
 = Broker =
 == QOS 0 - zero or more deliveries ==
-
-
+=== Normal Flow ===
+ * client sends a QoS 0 message
 
 == QOS 1 - one or more deliveries ==
-=== Death before {P,SUB,UNSUB}UBACK ===
- * client sends a QoS 1 message
- * client dies
- * client restarts with same client id
- * client recovers unacknowledged message and resends until acknowledged
+=== Normal Flow ===
+ * client sends a QoS 1 message (PUBLISH, SUBSCRIBE, UNSUBSCRIBE) and stores in Persistent Outbox
+ * client receives {PUB,SUB,UNSUB}ACK and removes message from Outbox
+
+=== Death before Acknowledgement ===
+ * client sends a QoS 1 message (PUBLISH, SUBSCRIBE, UNSUBSCRIBE) and stores in Persistent Outbox
+ * client dies before {PUB,SUB,UNSUB}ACK received 
+ * client restarts with same client id and recovers Persistent Outbox
+ * client messages in Outbox
+ * client receives {PUB,SUB,UNSUB}ACK and removes message from Outbox
 
 == QOS 2 - exactly one delivery ==
