@@ -1,0 +1,11 @@
+Some use cases to understand how quality of service levels should affect behaviour of MQTT clients and brokers.
+
+= Client =
+== QOS 0 - zero or more deliveries ==
+== QOS 1 - one or more deliveries ==
+== QOS 2 - exactly one delivery ==
+
+= Broker =
+== QOS 0 - zero or more deliveries ==
+== QOS 1 - one or more deliveries ==
+== QOS 2 - exactly one delivery ==
