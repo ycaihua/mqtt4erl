@@ -25,6 +25,12 @@ Some use cases to understand how quality of service levels should affect behavio
  * client receives {PUB,SUB,UNSUB}ACK and removes message from Outbox
 
 == QOS 2 - exactly one delivery ==
+=== Normal Flow ===
+ * client sends a QoS 2 PUBLISH message and stores in Persistent Outbox
+ * broker replies with PUBREC 
+ * client sends PUBREL
+ * broker responds with PUBCOMP
+ * client receives PUBCOMP and deletes message from Persistent Outbox
 
 = Broker =
 == QOS 0 - zero or more deliveries ==
@@ -70,3 +76,33 @@ Some use cases to understand how quality of service levels should affect behavio
  * broker removes message from Persistent Outbox
 
 == QOS 2 - exactly one delivery ==
+=== Normal Flow ===
+ * client A connects and subscribes to topic T requesting a QoS of 2
+ * broker receives message from client B with QoS 2 destined for topic T
+ * broker replies to client B with PUBREC
+ * client B replies with PUBREL
+ * broker receives PUBREL and may release the message
+ * broker acknowledges client B with a PUBCOMP
+ * broker retrieves list of subscribers to topic T, namely client A
+ * broker delivers message to client A and adds to Outbox
+ * client A replies with a PUBREC
+ * broker replies with a PUBREL
+ * client A replies with a PUBCOMP
+ * broker receives PUBCOMP and removes messae from Outbox
+
+=== Subscriber Connects, Disconnects and Reconnects ===
+ * client A connects and subscribes to topic T requesting a QoS of 2
+ * broker receives message from client B with QoS 2 destined for topic T
+ * broker replies to client B with PUBREC
+ * client B replies with PUBREL
+ * broker receives PUBREL and may release the message
+ * broker acknowledges client B with a PUBCOMP
+ * client A disconnects
+ * broker retrieves list of subscribers to topic T, namely client A
+ * broker marks message as 'pending' for client A
+ * client A reconnects
+ * broker delivers 'pending' message to client A
+ * client A replies with a PUBREC
+ * broker replies with a PUBREL
+ * client A replies with a PUBCOMP
+ * broker receives PUBCOMP and removes messae from Outbox
