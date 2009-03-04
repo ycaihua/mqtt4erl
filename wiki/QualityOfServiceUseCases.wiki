@@ -2,11 +2,6 @@ Some use cases to understand how quality of service levels should affect behavio
 
 = Client =
 == QOS 0 - zero or more deliveries ==
-== QOS 1 - one or more deliveries ==
-== QOS 2 - exactly one delivery ==
-
-= Broker =
-== QOS 0 - zero or more deliveries ==
 === Normal Flow ===
  * client sends a QoS 0 message
 
@@ -19,7 +14,25 @@ Some use cases to understand how quality of service levels should affect behavio
  * client sends a QoS 1 message (PUBLISH, SUBSCRIBE, UNSUBSCRIBE) and stores in Persistent Outbox
  * client dies before {PUB,SUB,UNSUB}ACK received 
  * client restarts with same client id and recovers Persistent Outbox
- * client messages in Outbox
+ * client resends messages in Outbox
+ * client receives {PUB,SUB,UNSUB}ACK and removes message from Outbox
+
+=== Transfer Interrupted ===
+ * client sends a QoS 1 message (PUBLISH, SUBSCRIBE, UNSUBSCRIBE) and stores in Persistent Outbox
+ * broker dies before message is transferred 
+ * client reconnects with same client id
+ * client resends messages in Outbox
  * client receives {PUB,SUB,UNSUB}ACK and removes message from Outbox
 
 == QOS 2 - exactly one delivery ==
+
+= Broker =
+== QOS 0 - zero or more deliveries ==
+=== Normal Flow ===
+ * broker receives QoS 0 message from client
+ * broker gets list of interested subscribers
+ * broker delivers message to interested subscribers
+
+== QOS 1 - one or more deliveries ==
+== QOS 2 - exactly one delivery ==
+
