@@ -78,10 +78,10 @@ Some use cases to understand how quality of service levels should affect behavio
 == QOS 2 - exactly one delivery ==
 === Normal Flow ===
  * client A connects and subscribes to topic T requesting a QoS of 2
- * broker receives message from client B with QoS 2 destined for topic T
+ * broker receives message from client B with QoS 2 destined for topic T, places it in Persistent inbox
  * broker replies to client B with PUBREC
  * client B replies with PUBREL
- * broker receives PUBREL and may release the message
+ * broker receives PUBREL and removes the message from the Inbox
  * broker acknowledges client B with a PUBCOMP
  * broker retrieves list of subscribers to topic T, namely client A
  * broker delivers message to client A and adds to Outbox
