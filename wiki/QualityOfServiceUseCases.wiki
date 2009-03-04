@@ -29,10 +29,44 @@ Some use cases to understand how quality of service levels should affect behavio
 = Broker =
 == QOS 0 - zero or more deliveries ==
 === Normal Flow ===
- * broker receives QoS 0 message from client
- * broker gets list of interested subscribers
- * broker delivers message to interested subscribers
+ * client A connects and subscribes to topic T
+ * client B connects and publishes to topic T with QoS 0
+ * broker delivers to all connected subscribers, namely client A
+
+=== Client Subscribes, then Disconnects ===
+ * client A connects and subscribes to topic T
+ * client A disconnects
+ * client B connects and publishes to topic T with QoS 0
+ * broker gets list of interested connected subscribers for topic T, namely client A
+ * noop: there are no connected subscribers to topic T
 
 == QOS 1 - one or more deliveries ==
-== QOS 2 - exactly one delivery ==
+=== Normal Flow ===
+ * client A connects and subscribes to topic T, requesting QoS 1
+ * client B connects and publishes to topic T with QoS 1, placing message in Persistent Outbox
+ * broker acknowledges receipt with a PUBACK to client B
+ * client B removes message from Persistent Outbox
+ * broker delivers message to client A, placing message in Persistent Outbox
+ * client A acknowledges by sending a PUBACK to the broker
+ * broker removes message from its Persistent Outbox
 
+=== Published QoS > Requested QoS ===
+ * client A connects and subscribes to topic T, requesting QoS 0
+ * client B connects and publishes to topic T with QoS 1, placing message in Persistent Outbox
+ * broker acknowledges receipt with a PUBACK to client B
+ * client B removes message from Persistent Outbox
+ * broker delivers message as QoS 0 to client A (see QoS 0 use cases above)
+
+=== Client Subscribes, then Disconnects, then Reconnects ===
+ * client A connects and subscribes to topic T, requesting QoS 1
+ * client A disconnects
+ * client B connects and publishes to topic T with QoS 1, placing message in Persistent Outbox
+ * broker acknowledges message with a PUBACK sent to client B
+ * client B removes message from Persistent Outbox
+ * client A is not connected: broker marks message as 'pending' for client A
+ * client A connects
+ * broker delivers 'pending' message to client A and places it in Persistent Outbox
+ * client A acknowledges message with a PUBACK
+ * broker removes message from Persistent Outbox
+
+== QOS 2 - exactly one delivery ==
