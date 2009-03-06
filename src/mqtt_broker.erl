@@ -1,4 +1,5 @@
 -module(mqtt_broker).
+-behaviour(gen_server).
 
 %% TODO
 %% - clean up topics with no subscribers
@@ -6,9 +7,8 @@
 
 -include_lib("mqtt.hrl").
 
--compile(export_all).
-
--export([start/0, distribute/1, route/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+-export([start_link/0, distribute/1, route/2]).
 
 -record(broker, {
   socket
@@ -18,20 +18,37 @@
   will
 }).
 
-start() ->
+start_link() -> gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
+
+
+init([]) ->
+  ?LOG({start}),
   case gen_tcp:listen(?MQTT_PORT, [binary, {active, false}, {packet, raw}, {nodelay, true}]) of
     {ok, ListenSocket} ->
-      Pid = spawn(fun() ->
-        gen_tcp:controlling_process(ListenSocket, self()),
-        Broker = #broker{
+      Pid = spawn_link(fun() ->
+        server_loop(#broker{
           socket = ListenSocket
-        },
-        server_loop(Broker)
+        })
       end),
       {ok, Pid};
     {error, Reason} ->
-        exit(Reason)
+      {stop, Reason}
   end.
+
+handle_call(Message, _FromPid, State) ->
+  ?LOG({unexpected_message, Message}),
+  {reply, ok, State}.
+
+handle_cast(Message, State) ->
+  ?LOG({unexpected_message, Message}),
+  {noreply, State}.
+
+handle_info(_, State) ->
+  {noreply, State}.
+
+terminate(_Reason, _State) -> ok.
+
+code_change(_OldVersion, State, _Extra) -> {ok, State}.
 
 server_loop(State) ->
   {ok, ClientSocket} = gen_tcp:accept(State#broker.socket),
@@ -56,9 +73,7 @@ owner_loop(State) ->
   NewState = receive
     {mqtt_client, connect, ClientId, Pid, Will} ->
       ?LOG({connect, from, ClientId, at, Pid}),
-      StorePid = mqtt_client:store_pid(ClientId, pending),
-      store:pass_messages(Pid, StorePid),
-      exit(StorePid, normal),
+      mqtt_store:pass_messages({ClientId, pending}, Pid),
       State#owner{will = Will};
     #mqtt{type = ?PUBLISH, retain = Retain} = Message ->
       distribute(Message),
@@ -108,9 +123,7 @@ route(#mqtt{} = Message, {ClientId, ClientPid, SubscribedQoS}) ->
         DampedMessage#mqtt.qos =:= 0 ->
           drop_on_the_floor;
         DampedMessage#mqtt.qos > 0 ->
-          StorePid = mqtt_client:store_pid(ClientId, pending),
-          mqtt_store:put_message(StorePid, Message),
-          exit(StorePid, normal)
+          mqtt_store:put_message({ClientId, pending}, Message)
       end;
     _ ->
       mqtt_client:deliver(ClientPid, DampedMessage)

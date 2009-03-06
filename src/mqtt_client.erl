@@ -7,7 +7,7 @@
 
 -include_lib("mqtt.hrl").
 
--export([connect/1, connect/3, publish/3, subscribe/2, unsubscribe/2, disconnect/1, get_message/0, default_client_id/0, client_loop/1, send_ping/1, resend_unack/1, deliver/2, store_pid/2]).
+-export([connect/1, connect/3, publish/3, subscribe/2, unsubscribe/2, disconnect/1, get_message/0, default_client_id/0, client_loop/1, send_ping/1, resend_unack/1, deliver/2]).
 
 connect(Host) ->
   connect(Host, ?MQTT_PORT, []).
@@ -17,7 +17,6 @@ connect(Host, Port, Options) ->
   Pid = case gen_tcp:connect(Host, Port, [binary, {active, false}, {packet, raw}, {nodelay, true}]) of
     {ok, Socket} ->
       spawn(fun() ->
-        ?LOG({client, self()}),
         process_flag(trap_exit, true),
         Context = #context{
           pid = self(),
@@ -147,10 +146,10 @@ client_loop(State) ->
       send(#mqtt{type = ?SUBACK, arg = {MessageId, Subs}}, State),
       State;
     #mqtt{type = ?SUBACK, arg = {MessageId, GrantedQoS}} ->
-      PendingSubs = (store:get_message(MessageId, State#client.outbox_pid))#mqtt.arg,
+      PendingSubs = (mqtt_store:get_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId))#mqtt.arg,
       ?LOG({suback, PendingSubs}),
       State#client.owner_pid ! {?MODULE, subscription, updated, merge_subs(PendingSubs, GrantedQoS)},
-      store:delete_message(MessageId, State#client.outbox_pid),
+      mqtt_store:delete_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId),
       State;
     #mqtt{type = ?UNSUBSCRIBE, id = MessageId, arg = {_, Unsubs}} ->
       ?LOG({unsubscribe, Unsubs}),
@@ -158,10 +157,10 @@ client_loop(State) ->
       send(#mqtt{type = ?UNSUBACK, arg = MessageId}, State),
       State;
     #mqtt{type = ?UNSUBACK, arg = MessageId} ->
-      PendingUnsubs = (store:get_message(MessageId, State#client.outbox_pid))#mqtt.arg,
+      PendingUnsubs = (mqtt_store:get_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId))#mqtt.arg,
       ?LOG({unsuback, PendingUnsubs}),
       State#client.owner_pid ! {?MODULE, subscription, updated, PendingUnsubs},
-      store:delete_message(MessageId, State#client.outbox_pid),
+      mqtt_store:delete_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId),
       State;
     #mqtt{type = ?PUBLISH, qos = 0} = Message ->
       State#client.owner_pid ! Message,
@@ -171,24 +170,24 @@ client_loop(State) ->
       send(#mqtt{type = ?PUBACK, arg = Message#mqtt.id}, State),
       State;   
     #mqtt{type = ?PUBACK, arg = MessageId} ->
-      store:delete_message(MessageId, State#client.outbox_pid),
+      mqtt_store:delete_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId),
       State;
     #mqtt{type = ?PUBLISH, qos = 2} = Message ->
       ?LOG({client, holding, qos, 2, mqtt_core:pretty(Message)}),
-      store:put_message(Message, State#client.inbox_pid),
+      mqtt_store:put_message({(State#client.connect_options)#connect_options.client_id, inbox}, Message),
       send(#mqtt{type = ?PUBREC, arg = Message#mqtt.id}, State),
       State;
     #mqtt{type = ?PUBREC, arg = MessageId} ->
       send(#mqtt{type = ?PUBREL, arg = MessageId}, State),
       State;
     #mqtt{type = ?PUBREL, arg = MessageId} ->
-      Message = store:get_message(MessageId, State#client.inbox_pid),
+      Message = mqtt_store:get_message({(State#client.connect_options)#connect_options.client_id, inbox}, MessageId),
       State#client.owner_pid ! Message,
-      store:delete_message(MessageId, State#client.inbox_pid),
+      mqtt_store:delete_message({(State#client.connect_options)#connect_options.client_id, inbox}, MessageId),
       send(#mqtt{type = ?PUBCOMP, arg = MessageId}, State),
       State;
     #mqtt{type = ?PUBCOMP, arg = MessageId} ->
-      store:delete_message(MessageId, State#client.outbox_pid),
+      mqtt_store:delete_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId),
       State;
     #mqtt{type = ?DISCONNECT} ->
       exit(self(), client_disconnect),
@@ -211,9 +210,7 @@ start_client(State) ->
   PingInterval = (State#client.connect_options)#connect_options.keepalive,
   RetryInterval = (State#client.connect_options)#connect_options.retry,
   InitialState = State#client{
-    id_pid = spawn_link(fun() -> id:start() end),
-    inbox_pid = store_pid((State#client.connect_options)#connect_options.client_id, inbox),
-    outbox_pid = store_pid((State#client.connect_options)#connect_options.client_id, outbox)
+    id_pid = spawn_link(fun() -> id:start() end)
   },
   InitialState#client{
     ping_timer = timer:apply_interval(PingInterval * 1000, ?MODULE, send_ping, [InitialState]),
@@ -248,7 +245,7 @@ resend_unack(State) ->
   lists:foreach(fun({_MessageId, Message}) ->
     ?LOG({resend, mqtt_core:pretty(Message)}),
     send(Message#mqtt{dup = 1}, State) 
-  end, store:get_all_messages(State#client.outbox_pid)).
+  end, mqtt_store:get_all_messages({(State#client.connect_options)#connect_options.client_id, outbox})).
 
 will_message(O) ->
   case O#connect_options.will of
@@ -268,7 +265,7 @@ send(#mqtt{} = Message, State) ->
   SendableMessage = if
     Message#mqtt.dup =:= 0, Message#mqtt.qos > 0 ->
       IdMessage = Message#mqtt{id = id:get_incr(State#client.id_pid)},
-      ok = store:put_message(IdMessage, State#client.outbox_pid),
+      ok = mqtt_store:put_message({(State#client.connect_options)#connect_options.client_id, outbox}, IdMessage),
       IdMessage;
     true ->
       Message
@@ -277,11 +274,3 @@ send(#mqtt{} = Message, State) ->
 
 deliver(Pid, Message) ->
   Pid ! {'_deliver', Message}.
-
-store_pid(ClientId, StoreId) ->
-  case global:whereis_name({ClientId, StoreId}) of
-    undefined ->
-      store:start_link(ClientId, StoreId);
-    Pid ->
-      Pid
-  end.
