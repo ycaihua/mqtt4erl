@@ -34,11 +34,11 @@ get_all_messages(Handle) ->
 get_message(Handle, MessageId) ->
   gen_server:call({global, ?MODULE}, {get, Handle, MessageId}, 1).
 
-delete_message(Handle, Message) ->
-  gen_server:call({global, ?MODULE}, {delete, Handle, Message}, 1).
+delete_message(Handle, MessageId) ->
+  gen_server:call({global, ?MODULE}, {delete, Handle, MessageId}, 1).
 
 pass_messages(Handle, ToPid) ->
-  gen_server:cast({global, ?MODULE}, {pass, Handle, ToPid}, 1).
+  gen_server:call({global, ?MODULE}, {pass, Handle, ToPid}, 1).
 
 handle_call({put, Handle, Message}, _FromPid, State) when Message#mqtt.id /= undefined ->
   {reply, dets:insert(State#store.table, {Handle, Message#mqtt.id, Message}), State};
@@ -49,18 +49,19 @@ handle_call({get, Handle, all}, _FromPid, State) ->
 handle_call({get, Handle, MessageId}, _FromPid, State) ->
   [[Message]] = dets:match(State#store.table, {Handle, MessageId, '$1'}),
   {reply, Message, State};
-handle_call({delete, Handle, Message}, _FromPid, State) ->
-  {reply, dets:delete_object(State#store.table, {Handle, Message#mqtt.id, Message}), State};
-handle_call(Message, _FromPid, State) ->
-  ?LOG({unexpected_message, Message}),
-  {reply, ok, State}.
-
-handle_cast({pass, Handle, ToPid}, State) ->
+handle_call({delete, Handle, MessageId}, _FromPid, State) ->
+  [[Message]] = dets:match(State#store.table, {Handle, MessageId, '$1'}),
+  {reply, dets:delete_object(State#store.table, {Handle, MessageId, Message}), State};
+handle_call({pass, Handle, ToPid}, _FromPid, State) ->
   lists:foreach(fun({_, _, Message} = Object) ->
     ToPid ! Message,
     dets:delete_object(State#store.table, Object)
   end, dets:lookup(State#store.table, Handle)),
-  {noreply, State};
+  {reply, ok, State};
+handle_call(Message, _FromPid, State) ->
+  ?LOG({unexpected_message, Message}),
+  {reply, ok, State}.
+
 handle_cast(Message, State) ->
   ?LOG({unexpected_message, Message}),
   {noreply, State}.

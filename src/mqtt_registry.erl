@@ -16,6 +16,7 @@
 start_link() -> gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
+  ?LOG(start),
   {ok, #mqtt_registry{}}.
 
 handle_call({register, ClientId, Pid}, _From, State) ->

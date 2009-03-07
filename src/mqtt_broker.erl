@@ -8,7 +8,7 @@
 -include_lib("mqtt.hrl").
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([start_link/0, distribute/1, route/2]).
+-export([start_link/0, owner_loop/0, distribute/1, route/2]).
 
 -record(broker, {
   socket
@@ -22,7 +22,7 @@ start_link() -> gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
 
 
 init([]) ->
-  ?LOG({start}),
+  ?LOG(start),
   case gen_tcp:listen(?MQTT_PORT, [binary, {active, false}, {packet, raw}, {nodelay, true}]) of
     {ok, ListenSocket} ->
       Pid = spawn_link(fun() ->
@@ -32,6 +32,7 @@ init([]) ->
       end),
       {ok, Pid};
     {error, Reason} ->
+      ?LOG({listen_socket, fail, Reason}),
       {stop, Reason}
   end.
 

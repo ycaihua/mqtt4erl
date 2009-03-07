@@ -146,7 +146,8 @@ client_loop(State) ->
       send(#mqtt{type = ?SUBACK, arg = {MessageId, Subs}}, State),
       State;
     #mqtt{type = ?SUBACK, arg = {MessageId, GrantedQoS}} ->
-      PendingSubs = (mqtt_store:get_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId))#mqtt.arg,
+      SubMessage = mqtt_store:get_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId),
+      PendingSubs = SubMessage#mqtt.arg,
       ?LOG({suback, PendingSubs}),
       State#client.owner_pid ! {?MODULE, subscription, updated, merge_subs(PendingSubs, GrantedQoS)},
       mqtt_store:delete_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId),
@@ -157,7 +158,8 @@ client_loop(State) ->
       send(#mqtt{type = ?UNSUBACK, arg = MessageId}, State),
       State;
     #mqtt{type = ?UNSUBACK, arg = MessageId} ->
-      PendingUnsubs = (mqtt_store:get_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId))#mqtt.arg,
+      UnsubMessage = mqtt_store:get_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId),
+      PendingUnsubs = UnsubMessage#mqtt.arg,
       ?LOG({unsuback, PendingUnsubs}),
       State#client.owner_pid ! {?MODULE, subscription, updated, PendingUnsubs},
       mqtt_store:delete_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId),
