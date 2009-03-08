@@ -50,8 +50,7 @@ handle_call({get, Handle, MessageId}, _FromPid, State) ->
   [[Message]] = dets:match(State#store.table, {Handle, MessageId, '$1'}),
   {reply, Message, State};
 handle_call({delete, Handle, MessageId}, _FromPid, State) ->
-  [[Message]] = dets:match(State#store.table, {Handle, MessageId, '$1'}),
-  {reply, dets:delete_object(State#store.table, {Handle, MessageId, Message}), State};
+  {reply, dets:match_delete(State#store.table, {Handle, MessageId, '_'}), State};
 handle_call({pass, Handle, ToPid}, _FromPid, State) ->
   lists:foreach(fun({_, _, Message} = Object) ->
     ToPid ! Message,
