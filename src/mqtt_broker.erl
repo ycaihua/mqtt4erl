@@ -110,16 +110,18 @@ distribute(#mqtt{arg = {Topic, _}} = Message) ->
   end, Subscribers),
   ok.
 
-route(#mqtt{} = Message, {ClientId, ClientPid, SubscribedQoS}) ->
+route(#mqtt{} = Message, {ClientId, SubscribedQoS}) ->
   DampedMessage = if
     Message#mqtt.qos > SubscribedQoS ->
       Message#mqtt{qos = SubscribedQoS};
     true ->
       Message
   end,
-  ?LOG({passing, mqtt_core:pretty(DampedMessage), to, ClientId, ClientPid}),
-  case ClientPid of
-    not_connected ->
+  ?LOG({passing, mqtt_core:pretty(DampedMessage), to, ClientId}),
+  case mqtt_registry:lookup_pid(ClientId) of
+    Pid when is_pid(Pid) ->
+      mqtt_client:deliver(Pid, DampedMessage);
+    undefined ->
       if
         DampedMessage#mqtt.qos =:= 0 ->
           drop_on_the_floor;
@@ -127,5 +129,5 @@ route(#mqtt{} = Message, {ClientId, ClientPid, SubscribedQoS}) ->
           mqtt_store:put_message({ClientId, pending}, Message)
       end;
     _ ->
-      mqtt_client:deliver(ClientPid, DampedMessage)
+      ?LOG({no_route_to, ClientId})
   end.
