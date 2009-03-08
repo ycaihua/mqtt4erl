@@ -3,12 +3,11 @@
  
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
  
--export([start_link/0, get_subscribers/1, subscribe/2, unsubscribe/2, register_client/2, unregister_client/1, retain/1]).
+-export([start_link/0, get_subscribers/1, subscribe/2, unsubscribe/2, register_client/2, unregister_client/1, lookup_pid/1, retain/1]).
 
 -include_lib("mqtt.hrl").
  
 -record(mqtt_registry, {
-  registry = dict:new(),
   subscriptions = dict:new(),
   retainedMessages = dict:new()
 }).
@@ -19,21 +18,6 @@ init([]) ->
   ?LOG(start),
   {ok, #mqtt_registry{}}.
 
-handle_call({register, ClientId, Pid}, _From, State) ->
-  ?LOG({mqtt_registry, register, ClientId, Pid}),
-  case dict:find(ClientId, State#mqtt_registry.registry) of
-    {ok, OldPid} ->
-      ?LOG({killing_previous_client, OldPid}),
-      exit(OldPid, client_id_represented);
-    error ->
-      ignore
-  end,
-  {reply, ok, State#mqtt_registry{registry = dict:store(ClientId, Pid, State#mqtt_registry.registry)}};
-handle_call({unregister, ClientId}, _From, State) ->
-  ?LOG({unregister, ClientId}),
-  {reply, ok, State#mqtt_registry{
-        registry = dict:erase(ClientId, State#mqtt_registry.registry)
-  }};
 handle_call({subscribe, ClientId, Subs}, _From, State) ->
   ?LOG({subscribe, ClientId, Subs}),
   NewSubscriptions = lists:foldl(fun(#sub{topic = Topic, qos = QoS}, InterimState) ->
@@ -58,7 +42,13 @@ handle_call({unsubscribe, ClientId, Unubs}, _From, State) ->
       end, State#mqtt_registry.subscriptions, Unubs),
       {reply, ok, State#mqtt_registry{subscriptions = NewSubscriptions}};
 handle_call({get_subscribers, Topic}, _From, State) ->
-      {reply, lookup_subscribers(Topic, State), State};
+      Subscribers = case dict:find(Topic, State#mqtt_registry.subscriptions) of
+        {ok, S} ->
+          S;
+        error ->
+          []
+      end,
+      {reply, Subscribers, State};
 handle_call({retain, #mqtt{arg = {Topic, _}} = Message}, _From, State) ->
   ?LOG({retaining, mqtt_core:pretty(Message), for, Topic}),
   {reply, ok, State#mqtt_registry{retainedMessages = dict:store(Topic, Message, State#mqtt_registry.retainedMessages)}};
@@ -68,15 +58,14 @@ handle_call(Message, _From, State) ->
 
 handle_cast({deliver_retained, Topic, ClientId}, State) ->
   ?LOG({deliver_retained, Topic, to, ClientId}),
-  Client = case dict:find(Topic , State#mqtt_registry.subscriptions) of
-    {ok, Subscribers} ->
-      {_, SubscribedQoS} = lists:keysearch(ClientId, 1, Subscribers),
-      {ClientId, lookup_pid(ClientId, State), SubscribedQoS};
-    error ->
-      exit({deliver_retained, topic, Topic, not_subscriber, ClientId})
-  end,
   case dict:find(Topic, State#mqtt_registry.retainedMessages) of
     {ok, RetainedMessage} ->
+      Client = case dict:find(Topic , State#mqtt_registry.subscriptions) of
+        {ok, Subscribers} ->
+          lists:keysearch(ClientId, 1, Subscribers);
+        error ->
+          exit({deliver_retained, topic, Topic, not_subscriber, ClientId})
+      end,
       mqtt_broker:route(RetainedMessage, Client);
     error ->
       noop
@@ -88,24 +77,6 @@ handle_info(_Msg, State) -> {noreply, State}.
 terminate(_Reason, _State) -> ok.
 code_change(_OldVersion, State, _Extra) -> {ok, State}.
 
-lookup_subscribers(Topic, State) ->
-  case dict:find(Topic, State#mqtt_registry.subscriptions) of
-    {ok, Subscribers} ->
-      lists:map(fun({ClientId, QoS}) ->
-        {ClientId, lookup_pid(ClientId, State), QoS}
-      end, Subscribers);
-    error ->
-      []
-  end.
-
-lookup_pid(ClientId, State) ->
-  case dict:find(ClientId, State#mqtt_registry.registry) of
-    {ok, Pid} ->
-      Pid;
-    error ->
-      not_connected
-  end.
-
 subscribe(ClientId, Subs) ->
   gen_server:call({global, ?MODULE}, {subscribe, ClientId, Subs}).
 
@@ -116,10 +87,29 @@ get_subscribers(Topic) ->
   gen_server:call({global, ?MODULE}, {get_subscribers, Topic}).
 
 register_client(ClientId, Pid) ->
-  gen_server:call({global, ?MODULE}, {register, ClientId, Pid}).
+  Handle = handle(ClientId),
+  case global:register_name(Handle, Pid) of
+    yes ->
+      ok;
+    no ->
+      case global:whereis_name(Handle) of
+        undefined ->
+          exit({lookup, failed, Handle});
+        OldPid ->
+          exit(OldPid, client_id_represented),
+          global:reregister_name(ClientId, Pid),
+          ok
+      end
+  end.
 
 unregister_client(ClientId) ->
-  gen_server:call({global, ?MODULE}, {unregister, ClientId}).
+  global:unregister_name(handle(ClientId)).
+
+lookup_pid(ClientId) ->
+  global:whereis_name(handle(ClientId)).
 
 retain(Message) ->
   gen_server:call({global, ?MODULE}, {retain, Message}).
+
+handle(ClientId) ->
+  {mqtt_client, ClientId}.

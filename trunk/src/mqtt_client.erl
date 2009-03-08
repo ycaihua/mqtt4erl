@@ -12,35 +12,40 @@
 connect(Host) ->
   connect(Host, ?MQTT_PORT, []).
 connect(Host, Port, Options) ->
-  O = mqtt_core:set_connect_options(Options),
-  OwnerPid = self(),
-  Pid = case gen_tcp:connect(Host, Port, [binary, {active, false}, {packet, raw}, {nodelay, true}]) of
-    {ok, Socket} ->
-      spawn(fun() ->
-        process_flag(trap_exit, true),
-        Context = #context{
-          pid = self(),
-          socket = Socket
-        },
-        ClientState = #client{
-          context = Context,
-          owner_pid = OwnerPid,
-          connect_options = O
-        },
-        ok = send(#mqtt{type = ?CONNECT, arg = {Host, Port, O}}, ClientState),
-        spawn_link(fun() -> mqtt_core:recv_loop(Context) end),
-        client_loop(ClientState)
-      end);
-    {error, Reason} ->
-      exit({connect, socket, fail, Reason})
-  end,
-  receive
-    {?MODULE, connected, _ClientId, _Pid} ->
-      {ok, Pid}
-    after
-      O#connect_options.connect_timeout * 1000 ->
-        exit(Pid, cancel),
-        {error, connect_timeout}
+  case global:whereis_name(mqtt_store) of
+    undefined ->
+      exit({mqtt_store, not_started});
+    _ ->
+      O = mqtt_core:set_connect_options(Options),
+      OwnerPid = self(),
+      Pid = case gen_tcp:connect(Host, Port, [binary, {active, false}, {packet, raw}, {nodelay, true}]) of
+        {ok, Socket} ->
+        spawn(fun() ->
+          process_flag(trap_exit, true),
+          Context = #context{
+            pid = self(),
+            socket = Socket
+          },
+          ClientState = #client{
+            context = Context,
+            owner_pid = OwnerPid,
+            connect_options = O
+          },
+          ok = send(#mqtt{type = ?CONNECT, arg = {Host, Port, O}}, ClientState),
+          spawn_link(fun() -> mqtt_core:recv_loop(Context) end),
+          client_loop(ClientState)
+        end);
+      {error, Reason} ->
+        exit({connect, socket, fail, Reason})
+    end,
+    receive
+      {?MODULE, connected, _ClientId, _Pid} ->
+        {ok, Pid}
+      after
+        O#connect_options.connect_timeout * 1000 ->
+          exit(Pid, cancel),
+          exit(connect_timeout)
+    end
   end.
 
 publish(Pid, Topic, Message) ->
@@ -175,7 +180,7 @@ client_loop(State) ->
       mqtt_store:delete_message({(State#client.connect_options)#connect_options.client_id, outbox}, MessageId),
       State;
     #mqtt{type = ?PUBLISH, qos = 2} = Message ->
-      ?LOG({client, holding, qos, 2, mqtt_core:pretty(Message)}),
+      ?LOG({placing, mqtt_core:pretty(Message), in, inbox}),
       mqtt_store:put_message({(State#client.connect_options)#connect_options.client_id, inbox}, Message),
       send(#mqtt{type = ?PUBREC, arg = Message#mqtt.id}, State),
       State;
@@ -239,12 +244,12 @@ merge_subs([{sub, Topic, _}|PendingTail], [QoS|GrantedTail], GrantedSubs) ->
   merge_subs(PendingTail, GrantedTail, [{sub, Topic, QoS}|GrantedSubs]).
 
 send_ping(State) ->
-  ?LOG({send, ping}),
+  ?LOG(ping),
   send(#mqtt{type = ?PINGREQ}, State).
 
 resend_unack(State) ->
   ?LOG(resend_unack),
-  lists:foreach(fun({_MessageId, Message}) ->
+  lists:foreach(fun(Message) ->
     ?LOG({resend, mqtt_core:pretty(Message)}),
     send(Message#mqtt{dup = 1}, State) 
   end, mqtt_store:get_all_messages({(State#client.connect_options)#connect_options.client_id, outbox})).
