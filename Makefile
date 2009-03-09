@@ -2,18 +2,17 @@ ERL=erl -pa ./ebin
 ERLC=erlc
 CP=cp
 RM=rm
-APP_NAME=
-VSN=0.2.0
+APP_NAME=mqtt_broker
+VSN=0.3.0
 
 all: 
 	$(ERL) -make
 	$(CP) src/*.app ebin/
 
 boot: all
-	$(ERL) -eval 'systools:make_script("bbc2daap_$(VSN)", [local, {outdir, "."}, {path,["ebin", "$(YAWS_HOME)/ebin"]}, no_module_tests]), init:stop().' -noshell
+	$(ERL) -eval 'systools:make_script("$(APP_NAME)_$(VSN)", [local, {outdir, "."}, {path,["ebin"]}, no_module_tests]), init:stop().' -noshell
 
 clean:
-	$(RM) -fv Emakefile
 	$(RM) -fv *.boot
 	$(RM) -fv *.script
 	$(RM) -fv *.tar.gz
@@ -22,9 +21,9 @@ clean:
 	$(RM) -fv ebin/*.app
 
 dist:
-	$(ERL) -eval 'systools:make_script("bbc2daap_$(VSN)", [{path,["ebin", "$(YAWS_HOME)/ebin"]}]), init:stop().' -noshell
-	$(ERL) -eval 'systools:make_tar("bbc2daap_$(VSN)", [{path, ["./ebin/","$(YAWS_HOME)/ebin/"]}, {erts, code:root_dir()}]), init:stop().' -noshell
+	$(ERL) -eval 'systools:make_script("$(APP_NAME)_$(VSN)", [{path,["ebin"]}]), init:stop().' -noshell
+	$(ERL) -eval 'systools:make_tar("$(APP_NAME)_$(VSN)", [{path, ["./ebin/","$(YAWS_HOME)/ebin/"]}, {erts, code:root_dir()}]), init:stop().' -noshell
 
 run:
 	$(ERL) -smp auto \
-	-boot bbc2daap_$(VSN)
+	-boot $(APP_NAME)_$(VSN)
