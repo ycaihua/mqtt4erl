@@ -69,7 +69,7 @@ unsubscribe(Pid, Topic) ->
 disconnect(Pid) ->
   Pid ! {?MODULE, disconnect},
   receive
-    {?MODULE, disconnected, _ClientId, _Will} ->
+    {?MODULE, disconnected, _ClientId} ->
       ok
   end.
 
