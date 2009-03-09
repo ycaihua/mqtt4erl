@@ -40,8 +40,6 @@
   connect_options,
   id_pid,
   owner_pid,
-  inbox_pid,
-  outbox_pid,
   ping_timer,
   retry_timer
 }).
