@@ -26,6 +26,8 @@ dbg:p(new, [all]).
 
  = Refine the Trace Pattern =
 
+If you are tracing function calls (the {{{c}}} tracing flag is set, as above) the trace pattern allows you to refine exactly which function calls are traced.
+
 {{{
 dbg:tp().
 }}}
