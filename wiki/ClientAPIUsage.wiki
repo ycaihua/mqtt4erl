@@ -105,6 +105,32 @@ This call is asynchronous - your process will be sent a message of the form
 
 when the broker acknowledges your request. {{{Subscriptions}}} is an array of {{{sub}}} records containing the topics you requested to be unsubscribed from.
 
+ = Publishing a Message =
+ == Simple ==
+
+{{{
+mqtt_client:publish(Pid, Topic, Message).
+}}}
+
+where:
+ * {{{Pid}}} is a client pid returned by {{{mqtt_client:connect}}}
+ * {{{Topic}}} is the name of the topic to publish to, eg {{{"topic"}}}
+ * {{{Message}}} is the content of the message to send, eg {{{"message"}}}
+
+ == Advanced ==
+
+{{{
+mqtt_client:publish(Pid, Topic, Message, Options).
+}}}
+
+where:
+ * {{{Pid}}} is a client pid returned by {{{mqtt_client:connect}}}
+ * {{{Topic}}} is the name of the topic to publish to, eg {{{"topic"}}}
+ * {{{Message}}} is the content of the message to send, eg {{{"message"}}}
+ * {{{Options}}} is an array which may contain the following elements:
+   * {{{{qos, QoS}}}} indicating the quality of service to be used in delivering the message, either {{{0}}}, {{{1}}} or {{{2}}}
+   * {{{{retain, true}}}} to indicate that the message should be retained, and delivered automatically to clients subscribing to the designated topic
+
  = Disconnecting =
 
 {{{
