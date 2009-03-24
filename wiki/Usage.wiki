@@ -65,7 +65,7 @@ This call is asynchronous - your process will be sent a message of the form
 {mqtt_client, subscribed, Subscriptions|
 }}}
 
-when the broker acknowledges your request. {{{Subscriptions}}} is an array of {{{sub}}} records containing the topics and the quality of service levels granted by the broker.
+when the broker acknowledges your request. {{{Subscriptions}}} is an array of {{{sub}}} records containing the topics you requested a subscription for, and the quality of service levels you were granted by the broker.
 
  = Unsubscribing to a Topic =
  == Simple ==
@@ -79,6 +79,27 @@ where:
  * {{{Topic}}} is the name of a topic to unsubscribe from, eg {{{"topic"}}}.
 
 This call is synchronous.
+
+ == Advanced ==
+
+{{{
+gen_server:call(Pid, {mqtt_client, unsubscribe, [Topics]}).
+}}}
+
+where:
+ * {{{Pid}}} is a client pid returned by {{{mqtt_client:connect}}}
+ * {{{Topics}}} is an array of {{{sub}}} records, which feature the following fields:
+  * {{{topic}}} the name of a topic to subscribe to, eg {{{"topic"}}}
+
+The definition for the {{{sub}}} record type is included in {{{include/mqtt.hrl}}}.
+
+This call is asynchronous - your process will be sent a message of the form
+
+{{{
+{mqtt_client, unsubscribed, Subscriptions|
+}}}
+
+when the broker acknowledges your request. {{{Subscriptions}}} is an array of {{{sub}}} records containing the topics you requested to be unsubscribed from.
 
  = Disconnecting =
 
