@@ -4,11 +4,10 @@
  1 connect
    1 default client id
    1 specify client id
-   1 specify ping frequency
-   1 specify resend frequency
    1 exit on socket timeout
    1 exit on no connack
    1 send ping
+     1 specify ping frequency on connect
      1 exit if no pong
    1 connect w/ will
    1 'clean start'
@@ -20,6 +19,7 @@
   1 qos 2
   1 retain
   1 resend unacknowledged
+   1 specify resend frequency on connect
 
  = Broker =
  1 accept connect
