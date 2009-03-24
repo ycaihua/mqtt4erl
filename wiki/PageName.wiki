@@ -1,9 +1,19 @@
 
-
  = Connect =
 
+ == Simple ==
 {{{
 mqtt_client:connect("172.16.50.128").
 }}}
 
- returns {{{{ok, Pid}}}}
+ returns {{{{ok, Pid}}}} on success
+
+ == Advanced ==
+{{{
+mqtt_client:connect("172.16.50.128", Port, Options).
+}}}
+
+where:
+ * {{{Port}}} is the port to connect to, eg {{{1883}}}
+ * {{{Options}}} is an array which can contain:
+  * {{{{client_id, ClientId}}}} specifies the id to connect as
