@@ -7,7 +7,7 @@
    1 send ping
      1 exit if no pong
    1 connect w/ will
-   2 'clean start'
+   1 'clean start'
  1 disconnect
  1 subscribe to topics
  1 unsubscribe from topics
