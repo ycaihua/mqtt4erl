@@ -15,6 +15,8 @@ mqtt_client:connect("172.16.50.128").
 
  returns {{{{ok, Pid}}}} on success
 
+This call is synchronous.
+
  == Advanced ==
 {{{
 mqtt_client:connect("172.16.50.128", Port, Options).
@@ -37,16 +39,24 @@ where:
 mqtt_client:subscribe(R, Topic).
 }}}
 
-where {{{Topic}}} is the name of a topic to subscribe to, eg {{{"topic"}}}.
+where:
+ * {{{Pid}}} is a client pid returned by {{{mqtt_client:connect}}}
+ * {{{Topic}}} is the name of a topic to subscribe to, eg {{{"topic"}}}.
+
+This call is synchronous.
 
  = Unsubscribing to a Topic =
  == Simple ==
 
 {{{
-mqtt_client:unsubscribe(R, Topic).
+mqtt_client:unsubscribe(Pid, Topic).
 }}}
 
-where {{{Topic}}} is the name of a topic to unsubscribe from, eg {{{"topic"}}}.
+where:
+ * {{{Pid}}} is a client pid returned by {{{mqtt_client:connect}}}.
+ * {{{Topic}}} is the name of a topic to unsubscribe from, eg {{{"topic"}}}.
+
+This call is synchronous.
 
  = Disconnecting =
 
@@ -54,4 +64,5 @@ where {{{Topic}}} is the name of a topic to unsubscribe from, eg {{{"topic"}}}.
 mqtt_client:disconnect(Pid).
 }}}
 
-where {{{Pid}}} is a client pid returned by {{{mqtt_client:connect}}}.
+where:
+ * {{{Pid}}} is a client pid returned by {{{mqtt_client:connect}}}.
