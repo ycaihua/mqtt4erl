@@ -137,6 +137,26 @@ Note that the return of this call indicates that the message has been sent, not 
 
 For messages sent with a quality of service greater than 0, the client will manage the acknowledgement conversation with the broker, and automatically resending unacknowleged messsages.
 
+ = Receiving a Message =
+ == Simple ==
+
+{{{
+mqtt_client:get_message(Pid).
+}}}
+
+where:
+ * {{{Pid}}} is a client pid returned by {{{mqtt_client:connect}}}
+
+This call is synchronous and will block until a message is received.
+
+The client will automatically handle the protocol conversations necessary for receiving messages with a quality of service level greater than 0.
+
+ == Advanced ==
+
+When the client receives a message it will send it to your process where you may receive it asynchronously.
+
+Messages are received as {{{mqtt}}} records. You can find the definition in {{{include/mqtt.hrl}}}.
+
  = Disconnecting =
 
 {{{
