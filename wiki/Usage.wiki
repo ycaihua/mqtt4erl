@@ -45,6 +45,28 @@ where:
 
 This call is synchronous.
 
+ == Advanced ==
+
+{{{
+gen_server:call(Pid, {mqtt_client, subscribe, [Topics]}).
+}}}
+
+where:
+ * {{{Pid}}} is a client pid returned by {{{mqtt_client:connect}}}
+ * {{{Topics}}} is an array of {{{sub}}} records, which feature the following fields:
+  * {{{topic}}} the name of a topic to subscribe to, eg {{{"topic"}}}
+  * {{{qos}}} the quality of service to request, either {{{0}}}, {{{1}}} or {{{2}}}
+
+The definition for the {{{sub}}} record type is included in {{{include/mqtt.hrl}}}.
+
+This call is asynchronous - your process will be sent a message of the form
+
+{{{
+{mqtt_client, subscribed, Subscriptions|
+}}}
+
+when the broker acknowledges your request. {{{Subscriptions}}} is an array of {{{sub}}} records containing the topics and the quality of service levels granted by the broker.
+
  = Unsubscribing to a Topic =
  == Simple ==
 
