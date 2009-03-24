@@ -2,6 +2,10 @@
 
  = Client =
  1 connect
+   1 default client id
+   1 specify client id
+   1 specify ping frequency
+   1 specify resend frequency
    1 exit on socket timeout
    1 exit on no connack
    1 send ping
