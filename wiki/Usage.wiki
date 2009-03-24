@@ -6,6 +6,13 @@ Start the message persistence service:
 mqtt_store:start().
 }}}
 
+The you can:
+ * <a href="#connecting">connect</a>
+ * <a href="#suscribing">subscribe</a>
+ * <a href="#unsuscribing">unsubscribe</a>
+ * <a href="#disconnecting">disconnect</a>
+
+<a name="connecting"/>
  = Connecting =
 
  == Simple ==
@@ -34,6 +41,7 @@ where:
    * {{{{qos, QoS}}}} indicating the quality of service to be used in delivering the message, either {{{0}}}, {{{1}}} or {{{2}}}
    * {{{{retain, true}}}} to indicate that the message should be retained, and delivered automatically to clients subscribing to the designated topic
 
+<a name="subscribing"/>
  = Subscribing to a Topic =
  == Simple ==
 
@@ -69,6 +77,7 @@ This call is asynchronous - your process will be sent a message of the form
 
 when the broker acknowledges your request. {{{Subscriptions}}} is an array of {{{sub}}} records containing the topics you requested a subscription for, and the quality of service levels you were granted by the broker.
 
+<a name="unsubscribing"/>
  = Unsubscribing to a Topic =
  == Simple ==
 
@@ -103,6 +112,7 @@ This call is asynchronous - your process will be sent a message of the form
 
 when the broker acknowledges your request. {{{Subscriptions}}} is an array of {{{sub}}} records containing the topics you requested to be unsubscribed from.
 
+<a name="disconnecting"/>
  = Disconnecting =
 
 {{{
