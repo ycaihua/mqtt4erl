@@ -117,6 +117,8 @@ where:
  * {{{Topic}}} is the name of the topic to publish to, eg {{{"topic"}}}
  * {{{Message}}} is the content of the message to send, eg {{{"message"}}}
 
+This will publish a non-retained message, with a quality of service of 0 (no delivery guarantees)
+
  == Advanced ==
 
 {{{
