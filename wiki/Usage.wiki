@@ -1,3 +1,11 @@
+ = Before You Begin =
+
+Start the message persistence service:
+
+{{{
+mqtt_store:start().
+}}}
+
  = Connecting =
 
  == Simple ==
@@ -19,6 +27,21 @@ where:
   * {{{{keepalive, Seconds}}}} specifies how frequently in seconds to ping the broker eg {{{10}}} - note the client will explode if it does not receive a ping response before the next ping
   * {{{{retry, Seconds}}}} how frequently in seconds to resend QoS 1 or 2 messages that have not been acknowledged by the broker
   * {{{{clean_start, true}}}} forces the broker to drop pending messages and subscriptions for this client id
+  * {{{{will, WillTopic, WillMessage, WillOptions}}}} specifies a message the broker will pass on when the client disconnects
+
+ = Subscribing to a Topic =
+ == Simple ==
+
+{{{
+mqtt_client:subscribe(R, "topic").
+}}}
+
+ = Unsubscribing to a Topic =
+ == Simple ==
+
+{{{
+mqtt_client:unsubscribe(R, "topic").
+}}}
 
  = Disconnecting =
 
