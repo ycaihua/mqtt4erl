@@ -33,15 +33,19 @@ where:
  == Simple ==
 
 {{{
-mqtt_client:subscribe(R, "topic").
+mqtt_client:subscribe(R, Topic).
 }}}
+
+where {{{Topic}}} is the name of a topic to subscribe to, eg {{{"topic"}}}.
 
  = Unsubscribing to a Topic =
  == Simple ==
 
 {{{
-mqtt_client:unsubscribe(R, "topic").
+mqtt_client:unsubscribe(R, Topic).
 }}}
+
+where {{{Topic}}} is the name of a topic to unsubscribe from, eg {{{"topic"}}}.
 
  = Disconnecting =
 
