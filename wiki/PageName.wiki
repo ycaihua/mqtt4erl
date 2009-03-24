@@ -1,0 +1,9 @@
+
+
+ = Connect =
+
+{{{
+mqtt_client:connect("172.16.50.128").
+}}}
+
+ returns {{{{ok, Pid}}}}
