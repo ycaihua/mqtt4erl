@@ -1,4 +1,3 @@
-
  = Connect =
 
  == Simple ==
@@ -17,3 +16,5 @@ where:
  * {{{Port}}} is the port to connect to, eg {{{1883}}}
  * {{{Options}}} is an array which can contain:
   * {{{{client_id, ClientId}}}} specifies the id to connect as
+  * {{{{keepalive, Seconds}}}} specifies how frequently in seconds to ping the broker eg {{{10}}} - note the client will explode if it does not receive a ping response before the next ping
+  * {{{{retry, Seconds}}}} how frequently to resend QoS 1 or 2 messages that have not been acknowledged by the broker
