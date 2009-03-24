@@ -1,0 +1,32 @@
+#summary Client and broker use cases, to guide development.
+
+ = Client =
+ 1 connect
+   1 exit on socket timeout
+   1 exit on no connack
+   1 send ping
+     1 exit if no pong
+   1 connect w/ will
+   2 'clean start'
+ 1 disconnect
+ 1 subscribe to topics
+ 1 unsubscribe from topics
+ 1 publish message
+  1 qos 1
+  1 qos 2
+  1 retain
+  1 resend unacknowledged
+
+ = Broker =
+ 1 accept connect
+  1 accept connection w/ will
+  1 'clean start'
+ 1 accept disconnect
+  1 deliver will
+ 1 accept subscription request
+   1 topic has retained message
+ 1 accept unsubscription request
+ 1 accept published message
+   1 accept 'retain' message
+   1 qos 1
+   2 qos 2
