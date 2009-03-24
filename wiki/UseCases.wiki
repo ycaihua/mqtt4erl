@@ -2,7 +2,8 @@
 
  = Client =
  1 connect
-   1 default client id
+   1 specify host
+   1 specify host and port
    1 specify client id
    1 exit on socket timeout
    1 exit on no connack
@@ -23,6 +24,7 @@
 
  = Broker =
  1 accept connect
+  1 duplicate client id represented
   1 accept connection w/ will
   1 'clean start'
  1 accept disconnect
