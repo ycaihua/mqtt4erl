@@ -1,3 +1,5 @@
+#summary How to use the client API to connect to an MQTT broker
+
  = Before You Begin =
 
 Start the message persistence service:
