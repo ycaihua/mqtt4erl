@@ -32,7 +32,7 @@ where:
   * {{{{clean_start, true}}}} forces the broker to drop pending messages and subscriptions for this client id
   * {{{{will, WillTopic, WillMessage, WillOptions}}}} specifies a message the broker will pass on when the client disconnects. {{{WillOptions}}} is an array that can contain the following elements:
    * {{{{qos, QoS}}}} indicating the quality of service to be used in delivering the message, either {{{0}}}, {{{1}}} or {{{2}}}
-   * {{{retain, true}}} to indicate that the message should be retained, and delivered automatically to clients subscribing to the designated topic
+   * {{{{retain, true}}}} to indicate that the message should be retained, and delivered automatically to clients subscribing to the designated topic
 
  = Subscribing to a Topic =
  == Simple ==
