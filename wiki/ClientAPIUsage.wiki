@@ -133,6 +133,10 @@ where:
    * {{{{qos, QoS}}}} indicating the quality of service to be used in delivering the message, either {{{0}}}, {{{1}}} or {{{2}}}
    * {{{{retain, true}}}} to indicate that the message should be retained, and delivered automatically to clients subscribing to the designated topic
 
+Note that the return of this call indicates that the message has been sent, not that it has been received by clients.
+
+For messages sent with a quality of service greater than 0, the client will manage the acknowledgement conversation with the broker, and automatically resending unacknowleged messsages.
+
  = Disconnecting =
 
 {{{
