@@ -30,18 +30,14 @@
 -define(PINGRESP, 13).
 -define(DISCONNECT, 14).
 
--record(context, {
-  pid,
-  socket
-}).
-
--record(client, {
-  context,
-  connect_options,
+-record(mqtt_client, {
+  socket,
   id_pid,
   owner_pid,
   ping_timer,
-  retry_timer
+  retry_timer,
+  pong_timer,
+  connect_options
 }).
 
 -record(connect_options, {

@@ -9,7 +9,7 @@
 
 -compile(export_all).
 
--export([set_connect_options/1, set_publish_options/1, decode_message/2, recv_loop/1, encode_message/1, send/2]).
+-export([set_connect_options/1, set_publish_options/1, decode_message/2, recv_loop/2, encode_message/1, send/2]).
 
 set_connect_options(Options) ->
   set_connect_options(Options, #connect_options{}).
@@ -23,6 +23,8 @@ set_connect_options([{client_id, ClientId}|T], Options) ->
   set_connect_options(T, Options#connect_options{client_id = ClientId});
 set_connect_options([{clean_start, Flag}|T], Options) ->
   set_connect_options(T, Options#connect_options{clean_start = Flag});
+set_connect_options([{connect_timeout, Timeout}|T], Options) ->
+  set_connect_options(T, Options#connect_options{connect_timeout = Timeout});
 set_connect_options([#will{} = Will|T], Options) ->
   set_connect_options(T, Options#connect_options{will = Will});
 set_connect_options([UnknownOption|_T], _Options) ->
@@ -138,18 +140,18 @@ decode_subs(Bytes, Subs) ->
   <<_:16, Topic:TopicLength/binary, ?UNUSED:6, QoS:2/big, Rest/binary>> = Bytes,
   decode_subs(Rest, [#sub{topic = binary_to_list(Topic), qos = QoS}|Subs]). 
 
-recv_loop(Context) ->
-  FixedHeader = recv(1, Context),
-  RemainingLength = recv_length(Context),
-  Rest = recv(RemainingLength, Context),
+recv_loop(Socket, Pid) ->
+  FixedHeader = recv(1, Socket),
+  RemainingLength = recv_length(Socket),
+  Rest = recv(RemainingLength, Socket),
   Message = decode_message(decode_fixed_header(FixedHeader), Rest),
   ?LOG({recv, pretty(Message)}),
-  Context#context.pid ! Message,
-  recv_loop(Context).
+  Pid ! Message,
+  recv_loop(Socket, Pid).
 
 encode_message(#mqtt{type = ?CONNACK, arg = ReturnCode}) ->
   {<<?UNUSED:8, ReturnCode:8/big>>,<<>>};
-encode_message(#mqtt{type = ?CONNECT, arg = {_Host, _Port, #connect_options{} = Options}}) ->
+encode_message(#mqtt{type = ?CONNECT, arg = Options}) ->
   CleanStart = case Options#connect_options.clean_start of
     true ->
       1;
@@ -224,20 +226,20 @@ encode_message(#mqtt{type = ?DISCONNECT}) ->
 encode_message(#mqtt{} = Message) ->
   exit({encode_message, unknown_type, Message}).
 
-recv_length(Context) ->
-  recv_length(recv(1, Context), 1, 0, Context).
-recv_length(<<0:1, Length:7>>, Multiplier, Value, _Context) ->
+recv_length(Socket) ->
+  recv_length(recv(1, Socket), 1, 0, Socket).
+recv_length(<<0:1, Length:7>>, Multiplier, Value, _Socket) ->
   Value + Multiplier * Length;
-recv_length(<<1:1, Length:7>>, Multiplier, Value, Context) ->
-  recv_length(recv(1, Context), Multiplier * 128, Value + Multiplier * Length, Context).
+recv_length(<<1:1, Length:7>>, Multiplier, Value, Socket) ->
+  recv_length(recv(1, Socket), Multiplier * 128, Value + Multiplier * Length, Socket).
 
-send_length(Length, Context) when Length div 128 > 0 ->
+send_length(Length, Socket) when Length div 128 > 0 ->
   Digit = Length rem 128,
-  send(<<1:1, Digit:7/big>>, Context),
-  send_length(Length div 128, Context);
-send_length(Length, Context) ->
+  send(<<1:1, Digit:7/big>>, Socket),
+  send_length(Length div 128, Socket);
+send_length(Length, Socket) ->
   Digit = Length rem 128,
-  send(<<0:1, Digit:7/big>>, Context).
+  send(<<0:1, Digit:7/big>>, Socket).
  
 encode_fixed_header(Message) when is_record(Message, mqtt) ->
   <<(Message#mqtt.type):4/big, (Message#mqtt.dup):1, (Message#mqtt.qos):2/big, (Message#mqtt.retain):1>>.
@@ -278,10 +280,10 @@ decode_strings(<<Length:16/big, _/binary>> = Bytes, Strings) ->
   <<_:16, Binary:Length/binary, Rest/binary>> = Bytes,
   decode_strings(Rest, [binary_to_list(Binary)|Strings]).
 
-recv(0, _Context) ->
+recv(0, _Socket) ->
   <<>>;
-recv(Length, Context) ->
-  case gen_tcp:recv(Context#context.socket, Length) of
+recv(Length, Socket) ->
+  case gen_tcp:recv(Socket, Length) of
     {ok, Bytes} ->
 %%    ?LOG({recv,bytes,binary_to_list(Bytes)}),
       Bytes;
@@ -290,20 +292,20 @@ recv(Length, Context) ->
       exit(Reason)
   end.
 
-send(#mqtt{} = Message, Context) ->
+send(#mqtt{} = Message, Socket) ->
 %%?LOG({mqtt_core, send, pretty(Message)}),
   {VariableHeader, Payload} = encode_message(Message),
-  ok = send(encode_fixed_header(Message), Context),
-  ok = send_length(size(VariableHeader) + size(Payload), Context),
-  ok = send(VariableHeader, Context),
-  ok = send(Payload, Context),
+  ok = send(encode_fixed_header(Message), Socket),
+  ok = send_length(size(VariableHeader) + size(Payload), Socket),
+  ok = send(VariableHeader, Socket),
+  ok = send(Payload, Socket),
   ok;
-send(<<>>, _Context) ->
+send(<<>>, _Socket) ->
 %%?LOG({send, no_bytes}),
   ok;
-send(Bytes, Context) when is_binary(Bytes) ->
+send(Bytes, Socket) when is_binary(Bytes) ->
 %%?LOG({send,bytes,binary_to_list(Bytes)}),
-  case gen_tcp:send(Context#context.socket, Bytes) of
+  case gen_tcp:send(Socket, Bytes) of
     ok ->
       ok;
     {error, Reason} ->

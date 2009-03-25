@@ -1,6 +1,6 @@
 {application, mqtt_broker, 
   [{description, "An MQTT broker in erlang"}, 
-  {vsn, "0.3.0"}, 
+  {vsn, "0.2.0"}, 
   {modules, [id,
     mqtt_store,
     mqtt_core,

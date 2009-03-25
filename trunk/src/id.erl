@@ -1,6 +1,6 @@
 -module(id).
 
--export([get_incr/1, start/0]).
+-export([get_incr/1, start/0, start_link/0]).
 
 get_incr(IdPid) ->
   IdPid ! {id, get_incr, self()},
@@ -9,9 +9,15 @@ get_incr(IdPid) ->
       Id
   end.
 
-start() ->
-  loop(1).
+start_link() ->
+  Pid = start(),
+  link(Pid),
+  Pid.
 
+start() ->
+  spawn(fun() ->
+    loop(1)
+  end).
 
 loop(Sequence) ->
   receive
