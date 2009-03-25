@@ -1,0 +1,11 @@
+#summary How to build the client and the broker with the Makefile
+
+The handy {{{Makefile}}} contains some targets to get you up and running:
+
+ = {{{all}}} =
+
+Compiles the {{{.erl}}}s to {{{.beam}}}s
+
+ = {{{clean}}} =
+
+Delete all compiled files 
