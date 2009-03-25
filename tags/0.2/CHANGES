@@ -1,0 +1,11 @@
+0.1 to 0.2
+----------
+- namespaced message tuples
+- reworked quality of service support
+- fixed naive client id algorithm to generate ids of < 23 chars
+
+0.0 to 0.1
+----------
+- support for CONNACK return codes
+- fixed receipt of QoS 2 messages: only release to client applications once a 
+    'pubrel' has been received

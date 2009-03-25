@@ -1,0 +1,20 @@
+OVERVIEW
+========
+
+This is a client and broker for the Message Queue Telemetry Transport  
+written in erlang. It's an open, lightweight protocol for reliable message, 
+devised originally by IBM. Find out more about MQTT at http://mqtt.org/
+
+CONTACT
+=======
+
+Reach me at hellomatty@gmail.com
+
+GETTING STARTED
+===============
+
+You'll find clues on compiling the client and broker, and getting up and running,
+on the project wiki:
+
+http://code.google.com/p/mqtt4erl/w/
+
