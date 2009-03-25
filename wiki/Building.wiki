@@ -14,6 +14,10 @@ Delete all compiled files
 
 Compiles the broker's {{{.beam}}}s into a {{{.boot}}} that can be specified when you invoke erlang, to run the broker
 
+ == A Note on Version Compatability! ==
+
+If you are not building with erlang R12B-5 you may need to tweak the version numbers for the dependencies listed in the {{{mqtt_broker_<version>.rel}}} file in the project root.
+
  = {{{run}}} =
 
 Runs the broker by starting an erlang vm and specifying its {{{.boot}}} file
