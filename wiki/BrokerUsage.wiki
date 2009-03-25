@@ -1,11 +1,6 @@
 #summary How to get the broker up and running
 
- = From the command line =
-
-To make this easier the {{{Makefile}}} includes a target called {{{run}}} which will do this for you:
-{{{
-make run
-}}}
+See Building to learn how to get the broker compiled.
 
  = From the erlang shell =
 
@@ -26,3 +21,13 @@ Remember to get the {{{beam}}} files onto your path, for example by invoking the
 {{{
 erl -pa ./ebin
 }}}
+
+ = From the command line =
+
+Specify the broker's bootfile when you invoke erlang on the command line, eg:
+
+{{{
+erl -noshell -boot mqtt_broker_0.3.0
+}}}
+
+See Building for clues on getting the boot files built.
