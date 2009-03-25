@@ -16,8 +16,8 @@ Compiles the broker's {{{.beam}}}s into a {{{.boot}}} that can be specified when
 
  = {{{run}}} =
 
-Runs the broker by specifying the {{{.boot}}} when starting the vm
+Runs the broker by starting an erlang vm and specifying its {{{.boot}}} file
 
  = {{{dist}}} =
 
-Prepeare an tar/gz'd release suitable for distributing the broker, according to the [http://erlang.org/doc/design_principles/release_structure.html erlang way]
+Prepeare an tar/gz'd release suitable for distributing the broker according to the [http://erlang.org/doc/design_principles/release_structure.html erlang way]
