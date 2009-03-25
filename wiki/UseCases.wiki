@@ -36,3 +36,10 @@
    1 accept 'retain' message
    1 qos 1
    1 qos 2
+
+ = exit use cases =
+ * client calls disconnect
+ * broker exits
+ * client id represented
+ * no pong received
+ * connect timeout
