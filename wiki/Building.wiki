@@ -8,4 +8,16 @@ Compiles the {{{.erl}}}s to {{{.beam}}}s
 
  = {{{clean}}} =
 
-Delete all compiled files 
+Delete all compiled files
+
+ = {{{boot}}} =
+
+Compiles the broker's {{{.beam}}}s into a {{{.boot}}} that can be specified when you invoke erlang, to run the broker
+
+ = {{{run}}} =
+
+Runs the broker by specifying the {{{.boot}}} when starting the vm
+
+ = {{{dist}}} =
+
+Prepeare an tar/gz'd release suitable for distributing the broker, according to the [http://erlang.org/doc/design_principles/release_structure.html erlang way]
