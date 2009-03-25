@@ -1,0 +1,28 @@
+#summary How to get the broker up and running
+
+ = From the command line =
+
+To make this easier the {{{Makefile}}} includes a target called {{{run}}} which will do this for you:
+{{{
+make run
+}}}
+
+ = From the erlang shell =
+
+The broker is wrapped as an OTP application so it can be simply started with
+
+{{{
+application:start(mqtt_broker).
+}}}
+
+and stopped with:
+
+{{{
+application:stop(mqtt_broker).
+}}}
+
+
+Remember to get the {{{beam}}} files onto your path, for example by invoking the shell as
+{{{
+erl -pa ./ebin
+}}}
