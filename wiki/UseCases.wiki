@@ -41,5 +41,8 @@
  * client calls disconnect
  * broker exits
  * client id represented
+   1 kill recv of old connection on broker
+   1 kill owner  of old connection on broker
+   1 kill clientproxy  of old connection on broker
  * no pong received
  * connect timeout
