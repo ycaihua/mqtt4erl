@@ -1,6 +1,6 @@
 #summary How to get the broker up and running
 
-See Building to learn how to get the broker compiled.
+See [http://code.google.com/p/mqtt4erl/wiki/Building Building] to learn how to get the broker compiled.
 
  = From the erlang shell =
 
@@ -30,4 +30,6 @@ Specify the broker's bootfile when you invoke erlang on the command line, eg:
 erl -noshell -boot mqtt_broker_0.3.0
 }}}
 
-See Building for clues on getting the boot files built.
+This will look for {{{mqtt_broker_0.3.0.boot}}} in the current directory - see [http://code.google.com/p/mqtt4erl/wiki/Building Building] for clues on getting the boot files built.
+
+The Makefile's {{{run}}} target can be used as a shortcut for this method.
