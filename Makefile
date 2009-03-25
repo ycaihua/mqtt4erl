@@ -3,7 +3,7 @@ ERLC=erlc
 CP=cp
 RM=rm
 APP_NAME=mqtt_broker
-VSN=0.3.0
+VSN=0.2.0
 
 all: 
 	$(ERL) -make
@@ -22,8 +22,8 @@ clean:
 
 dist:
 	$(ERL) -eval 'systools:make_script("$(APP_NAME)_$(VSN)", [{path,["ebin"]}]), init:stop().' -noshell
-	$(ERL) -eval 'systools:make_tar("$(APP_NAME)_$(VSN)", [{path, ["./ebin/","$(YAWS_HOME)/ebin/"]}, {erts, code:root_dir()}]), init:stop().' -noshell
+	$(ERL) -eval 'systools:make_tar("$(APP_NAME)_$(VSN)", [{path, ["./ebin/"]}, {erts, code:root_dir()}]), init:stop().' -noshell
 
 run:
-	$(ERL) -smp auto \
+	ERL_MAX_PORTS=65535 $(ERL) -smp auto -noshell \
 	-boot $(APP_NAME)_$(VSN)
