@@ -1,8 +1,10 @@
 0.1 to 0.2
 ----------
+- fairly considerable code cleanup
 - namespaced message tuples
 - reworked quality of service support
 - fixed naive client id algorithm to generate ids of < 23 chars
+- now with added Broker!
 
 0.0 to 0.1
 ----------
